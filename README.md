@@ -75,6 +75,7 @@ doserad2026/
 │   ├── tests/
 │   └── artifacts/
 │
+├── LICENSE                                    # MIT
 ├── run_*.sh                                   # Job queue scripts (kept as-is)
 ├── DOSERAD2026_SUBMISSION_READINESS_AUDIT.md  # Self-assessment, 2026-08-14
 ├── DOSERAD2026_MASTER_ROADMAP.md              # Planning snapshot, superseded
@@ -319,3 +320,12 @@ University Medical Center and University Medical Center Utrecht, among others.
 - **Baseline:** <https://github.com/DoseRAD2026/pyradplan-pb-baseline>
 - **Submission template:** <https://github.com/DoseRAD2026/example-submission>
 - **Evaluation code:** <https://github.com/DoseRAD2026/evaluation-setup>
+
+## License
+
+MIT — see [LICENSE](LICENSE). This covers the code in this repository.
+
+Two things it does not cover. `llncs.cls` in the `paper*/` folders is Springer's LNCS
+document class, distributed under its own terms; the LNCS reports themselves are the
+author's work but are made available here for reading rather than reuse. The challenge
+data is not in this repository at all and remains under the DoseRAD2026 organizers' terms.
