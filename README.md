@@ -35,10 +35,14 @@ doserad2026/
 │   ├── src/doserad_proton/             # Core library (~1800 lines)
 │   │   ├── pencilbeam.py              #   pyRadPlan pencil-beam engine wrapper
 │   │   ├── inference.py               #   Sliding-window + slab-based inference
-│   │   ├── conditioning.py            #   10-channel proton beam conditioning
-│   │   └── data.py                    #   Dataset for 81k pencil-beam dose maps
+│   │   ├── conditioning.py            #   10-channel conditioning (dose-net path)
+│   │   └── data.py                    #   Manifest, splits, 81k pencil-beam dose maps
 │   ├── scripts/                       #   Training, evaluation, benchmarking
+│   │   ├── train_synthetic_ct.py      #   MRI→sCT network — trains the Task 4 model
+│   │   └── train.py                   #   Dose-prediction network (superseded)
 │   ├── submission/                    #   Dockerfile, FastAPI app, smoke tests
+│   │   ├── inference_pb.py            #   Pencil-beam backend — Task 3 and Task 4
+│   │   └── inference.py               #   Dose-network backend (superseded)
 │   ├── paper/                         #   Task 4 LNCS report
 │   ├── paper_t3/                      #   Task 3 LNCS report
 │   ├── tests/                         #   Unit tests
@@ -182,23 +186,34 @@ pip install -r doserad_photon_ct/requirements.txt
 
 ### Task 3 — build the pencil-beam submission container
 
+Task 3 needs no trained weights: the engine reads density from the planning CT.
+`build.sh` defaults to `DOSE_ENGINE=network`, so the pencil-beam image is built by
+passing the build argument explicitly.
+
 ```bash
 cd doserad_proton_ct
 
-# Package model weights into dist/
-bash submission/package_model.sh
-
-# Build the Docker image (linux/amd64, based on pytorch/pytorch:2.9.1-cuda12.6-cudnn9-runtime)
-bash submission/build.sh
+# Build the pencil-beam image (linux/amd64, on pytorch/pytorch:2.9.1-cuda12.6-cudnn9-runtime)
+docker build --platform=linux/amd64 \
+  --build-arg TASK=proton-ct --build-arg DOSE_ENGINE=pencilbeam \
+  --file submission/Dockerfile --tag doserad2026-proton-ct:latest ..
 
 # Save the image as a tarball for Grand Challenge upload
-bash submission/save_image.sh
+mkdir -p dist && docker save doserad2026-proton-ct:latest | gzip -c > dist/doserad2026-proton-ct.tar.gz
 
-# Run a local smoke test — starts the container, hits /health and /invoke
-bash submission/smoke_test.sh
+# Run a local smoke test — starts the container, hits /health and /invoke.
+# The script still gates on dist/proton-ct/best.pt, a leftover from the network
+# backend; the pencil-beam backend itself needs no dose checkpoint.
+bash submission/smoke_test.sh proton-ct
 ```
 
-### Task 4 — train the U-Net, then build submission
+### Task 4 — train the synthetic-CT network, then build submission
+
+The submitted Task 4 model is the MRI→synthetic-CT network trained by
+`scripts/train_synthetic_ct.py`. The dose-prediction scripts in the same folder
+(`scripts/train.py`, `scripts/train_all_gpu.sh`, `scripts/train_v*.sh`) belong to the
+earlier end-to-end approach that this one replaced; they are kept for the record and
+do not reproduce the submission.
 
 ```bash
 cd doserad_proton_ct
@@ -206,21 +221,31 @@ cd doserad_proton_ct
 # Prepare the dataset (audit, manifest, splits)
 python3 scripts/prepare_dataset.py
 
-# Train Task 3 (CT) then Task 4 (MRI) sequentially on one GPU
-bash scripts/train_all_gpu.sh
+# Warm-start run: 7 epochs at 2e-4
+python3 scripts/train_synthetic_ct.py \
+  --epochs 7 --learning-rate 2e-4 \
+  --output-dir runs/synthetic_ct_warm
 
-# Or train Task 4 (MRI) alone, warm-starting from a CT checkpoint
-bash scripts/train_v5_mri.sh
+# Final run: 40 epochs at 1.5e-4 with cosine annealing, warm-started from the above
+python3 scripts/train_synthetic_ct.py \
+  --epochs 40 --learning-rate 1.5e-4 \
+  --init-from runs/synthetic_ct_warm/best.pt \
+  --output-dir runs/synthetic_ct
 
-# Evaluate a checkpoint against validation patients
-python3 scripts/evaluate_checkpoint.py \
-  --checkpoint runs/<run_name>/best.pt \
-  --device cuda --max-records 10 --batch-size 2
+# Package the synthetic-CT checkpoint (no dose checkpoint for the pencil-beam backend)
+bash submission/package_model.sh - dist/proton-mri/model.tar.gz runs/synthetic_ct/best.pt
 
 # Build and test the submission container
-bash submission/build.sh
-bash submission/smoke_test.sh
+docker build --platform=linux/amd64 \
+  --build-arg TASK=proton-mri --build-arg DOSE_ENGINE=pencilbeam \
+  --file submission/Dockerfile --tag doserad2026-proton-mri:latest ..
+# The smoke script mounts dist/proton-mri at /opt/ml/model, where the backend
+# picks up sct.pt; it also gates on a best.pt in that folder (network-backend leftover).
+bash submission/smoke_test.sh proton-mri
 ```
+
+Checkpoints were selected by downstream beamlet-dose fidelity rather than HU error;
+`scripts/evaluate_checkpoint.py` runs that comparison against held-out patients.
 
 ### Task 1 (development only)
 
