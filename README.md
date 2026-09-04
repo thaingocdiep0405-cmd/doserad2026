@@ -75,10 +75,11 @@ doserad2026/
 │   ├── tests/
 │   └── artifacts/
 │
-├── run_*.sh                            # Job queue scripts (kept as-is)
-├── DOSERAD2026_MASTER_ROADMAP.md       # Development roadmap
-├── DOSERAD_COMPETITION_RUNBOOK.md      # Training and submission runbook
-└── TASK3_TASK4_SUBMISSION_EVALUATION.md
+├── run_*.sh                                   # Job queue scripts (kept as-is)
+├── DOSERAD2026_SUBMISSION_READINESS_AUDIT.md  # Self-assessment, 2026-08-14
+├── DOSERAD2026_MASTER_ROADMAP.md              # Planning snapshot, superseded
+├── DOSERAD_COMPETITION_RUNBOOK.md             # Training and submission runbook
+└── TASK3_TASK4_SUBMISSION_EVALUATION.md       # Intermediate evaluation, superseded
 ```
 
 ## Results — final test phase, published 1 September 2026

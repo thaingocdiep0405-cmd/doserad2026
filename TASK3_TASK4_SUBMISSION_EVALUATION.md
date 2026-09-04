@@ -1,5 +1,11 @@
 # DoseRAD2026 Task 3/4 — đánh giá và bộ nộp
 
+> **Snapshot of 2026-08-15, superseded.** The checkpoints assessed below belong to the
+> end-to-end dose-prediction networks that were the submission candidates at that date.
+> They were later replaced by the hybrid synthetic-CT + analytic pencil-beam method,
+> which is what was submitted to the final test phase. See the README for the final
+> method and results. Kept as a record of the intermediate stage.
+
 Ngày chốt local: 2026-08-15 (Asia/Bangkok).
 
 ## Kết luận

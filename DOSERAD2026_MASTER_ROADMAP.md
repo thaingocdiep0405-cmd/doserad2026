@@ -1,5 +1,12 @@
 # DoseRAD2026 — master roadmap and quality gates
 
+> **Planning snapshot, superseded.** This document was written while the proton
+> dataset was still downloading, which is why the table below lists Tasks 3 and 4 as
+> blocked. Both were subsequently built, submitted and reached the final test phase,
+> and the proton method that was actually submitted is the hybrid synthetic-CT +
+> analytic pencil-beam approach — not the dose-prediction network sketched here. See
+> the README for the final method and results. Kept as a record of the planning.
+
 This workspace targets all four challenge variants with separate models and
 submission containers. A result is considered ready only after every required
 gate below passes; a decreasing training loss alone is not sufficient.
