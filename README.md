@@ -83,23 +83,36 @@ available from the DoseRAD2026 organizers under the challenge's own terms.
 Environment:
 
 ```
-Python      TODO
-PyTorch     TODO
-pyRadPlan   TODO
+Python      3.13
+PyTorch     2.9.1 (CUDA 12.6)
+pyRadPlan   0.3.5
+NumPy       2.3.4
+SimpleITK   2.5.6
 ```
 
 ```bash
 # install
-TODO
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r doserad_proton_ct/submission/requirements.txt
+pip install -r doserad_proton_ct/submission/requirements-pb.txt
+pip install -r doserad_photon_ct/requirements.txt   # for Task 1/2
 
-# Task 3 — inference on a prepared case
-TODO
+# Task 3 — build and run the pencil-beam submission container
+cd doserad_proton_ct
+bash submission/package_model.sh
+bash submission/build.sh
+bash submission/smoke_test.sh
 
-# Task 4 — training, then inference
-TODO
+# Task 4 — train the U-Net, then build submission
+cd doserad_proton_ct
+bash scripts/train_v5_mri.sh
+bash submission/build.sh
+bash submission/smoke_test.sh
 
-# build a submission container
-TODO
+# Task 1 (development only) — train and evaluate
+cd doserad_photon_ct
+bash scripts/finalize_dataset.sh
+bash scripts/train_gpu.sh
 ```
 
 Containers were cross-built for x86 evaluation from an ARM64 workstation (NVIDIA DGX Spark).
