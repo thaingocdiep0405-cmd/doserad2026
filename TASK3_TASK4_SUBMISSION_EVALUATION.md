@@ -1,4 +1,4 @@
-# DoseRAD2026 Task 3/4 — đánh giá và bộ nộp
+# DoseRAD2026 Task 3/4 — evaluation and submission set
 
 > **Snapshot of 2026-08-15, superseded.** The checkpoints assessed below belong to the
 > end-to-end dose-prediction networks that were the submission candidates at that date.
@@ -6,159 +6,160 @@
 > which is what was submitted to the final test phase. See the README for the final
 > method and results. Kept as a record of the intermediate stage.
 
-Ngày chốt local: 2026-08-15 (Asia/Bangkok).
+Local freeze date: 2026-08-15 (Asia/Bangkok).
 
-## Kết luận
+## Conclusions
 
-- Task 3 Proton CT và Task 4 Proton MRI đã train xong, chọn checkpoint, kiểm tra
-  overfit, đánh giá full-volume và đóng gói thành hai thuật toán riêng.
-- Cả hai image cuối đều qua smoke test không mạng: `/health = 200`,
-  `/invoke = 201`, đủ 10 output scalar-4D MHA và đúng kiến trúc
-  `linux/amd64`.
-- Bộ local đủ để tạo **preliminary submission đầu tiên**, nhưng chưa thể khẳng
-  định top trước khi có điểm hidden test. Trang chính thức hiện vẫn cảnh báo lỗi
-  IDD và yêu cầu chưa submit nếu muốn giữ lượt nộp.
+- Task 3 Proton CT and Task 4 Proton MRI have finished training, checkpoint selection,
+  overfit checks and full-volume evaluation, and are packaged as two separate algorithms.
+- Both final images pass the offline smoke test: `/health = 200`, `/invoke = 201`, all
+  10 scalar-4D MHA outputs present, and the correct `linux/amd64` architecture.
+- The local results are enough for a **first preliminary submission**, but no claim about
+  a top placement can be made before hidden-test scores exist. The official site still
+  carries the IDD error warning and asks participants not to submit if they want to keep
+  their attempt.
 
-## Dữ liệu và leakage
+## Data and leakage
 
-- 75 bệnh nhân public được chia cố định theo bệnh nhân: 60 train, 15 validation.
-- Không có bệnh nhân trùng giữa train và validation.
-- Full-volume evaluation dùng 45 beamlet, trải trên đủ 15 bệnh nhân validation.
-- Validation đã được dùng để chọn checkpoint/tham số, vì vậy chỉ preliminary
-  hidden test mới là đánh giá ngoài mẫu hoàn toàn.
+- The 75 public patients are split at patient level and held fixed: 60 train, 15 validation.
+- No patient appears in both train and validation.
+- Full-volume evaluation uses 45 beamlets spread across all 15 validation patients.
+- Validation was used to select checkpoints and parameters, so only the preliminary
+  hidden test is a fully out-of-sample assessment.
 
-## Checkpoint được chọn
+## Selected checkpoints
 
-| Task | Checkpoint chính | MAE | NRMSE | IDD | Scale ratio |
+| Task | Primary checkpoint | MAE | NRMSE | IDD | Scale ratio |
 |---|---|---:|---:|---:|---:|
 | Task 3 — Proton CT | blend 50% v1 + 50% v2 | 0.048287 | 0.006003 | 0.197855 | 0.950037 |
 | Task 4 — Proton MRI | v1 teacher-student | 0.047828 | 0.005971 | 0.194345 | 0.944737 |
 
-Các số trên là full-volume validation, `patch=128³`, `overlap=0.25`,
-`ray_gate=1e-6`, không relative cutoff.
+These figures are full-volume validation at `patch=128³`, `overlap=0.25`,
+`ray_gate=1e-6`, with no relative cutoff.
 
-### Kiểm soát overfit
+### Overfit control
 
-- Task 3 v1 hoàn thành 30 epoch; train/validation vẫn cùng xu hướng, chưa có
-  dấu hiệu overfit cổ điển rõ rệt.
-- Task 3 v2 cải thiện IDD 5.30% nhưng MAE xấu 3.42%; epoch 2 tiếp tục làm
-  validation xấu hơn nên đã dừng sớm. Blend được chọn để cân bằng rủi ro.
-- Task 4 v1 hoàn thành 30 epoch và là checkpoint chính.
-- Task 4 v2 cải thiện IDD 4.12% nhưng MAE xấu 3.75% và scale xấu 0.79%;
-  không dùng làm submission chính.
+- Task 3 v1 completed 30 epochs; train and validation still move together, with no clear
+  sign of classical overfitting.
+- Task 3 v2 improved IDD by 5.30% but worsened MAE by 3.42%; epoch 2 made validation
+  worse again, so it was stopped early. The blend was chosen to balance the risk.
+- Task 4 v1 completed 30 epochs and is the primary checkpoint.
+- Task 4 v2 improved IDD by 4.12% but worsened MAE by 3.75% and scale by 0.79%; it was
+  not used as the primary submission.
 
 ## Runtime
 
-Conditioning proton đã được vector hóa trên GPU và kiểm chứng với bản NumPy:
+Proton conditioning has been vectorized on GPU and cross-checked against the NumPy
+implementation:
 
-- sai khác tensor lớn nhất: `1.19e-7`;
-- sai khác full-volume trung bình: `1.50e-10`;
-- giữ `overlap=0.25`, không đổi cấu hình accuracy.
+- largest tensor difference: `1.19e-7`;
+- mean full-volume difference: `1.50e-10`;
+- `overlap=0.25` retained, accuracy configuration unchanged.
 
-Benchmark trên ảnh validation thật `120×447×449`, 64 condition trải đều:
+Benchmarked on a real validation image of `120×447×449` with 64 conditions spread evenly:
 
-| Task | Ước tính inference cho 500 beamlet | Peak CUDA với 64 beamlet |
+| Task | Estimated inference for 500 beamlets | Peak CUDA at 64 beamlets |
 |---|---:|---:|
-| Task 3 | 428.69 giây | 22.99 GiB reserved |
-| Task 4 | 427.50 giây | 22.99 GiB reserved |
+| Task 3 | 428.69 seconds | 22.99 GiB reserved |
+| Task 4 | 427.50 seconds | 22.99 GiB reserved |
 
-Submission dùng `BEAMLET_CHUNK_SIZE=32`; cấu hình này đã đo peak khoảng
-17.14 GiB để có khoảng trống trên A10G 24 GiB. Các con số 428–429 giây là
-ước tính inference trên NVIDIA GB10, chưa phải runtime chính thức do Grand
-Challenge fit trên A10G và chưa bao gồm mọi khác biệt I/O/hardware. Ngưỡng chính
-thức cho proton là 500 giây.
+The submission uses `BEAMLET_CHUNK_SIZE=32`; that configuration measured a peak of about
+17.14 GiB, leaving headroom on a 24 GiB A10G. The 428–429 second figures are inference
+estimates on an NVIDIA GB10, not the official runtime, which Grand Challenge fits on an
+A10G, and they do not account for every I/O and hardware difference. The official proton
+threshold is 500 seconds.
 
-## Archive cuối
+## Final archives
 
 ### Task 3 — Proton CT
 
 - File: `doserad_proton_ct/dist/proton-ct/doserad2026-proton-ct.tar.gz`
-- Dung lượng: 3,934,305,172 byte
+- Size: 3,934,305,172 bytes
 - SHA-256: `b84bda60bb88a8b4f2017a6c6738c90ec42db68953511a599bb02cc036adea26`
 - Model SHA-256: `b4663434dc763c280c7c2b4b4241a6bbfe48c5ba7de57a2e998373cf4c14b482`
 - Docker image: `sha256:399d0ee12b4c9ee4351a5b6c141765369bc27d6b3f2dfdfef1f7e51028a0a008`
 
-Bản này thay bản `82b08e4c…` ngày 2026-08-15 sau khi sửa cách ghi output
-(xem "Sửa host memory" bên dưới). Checkpoint không đổi.
+This archive replaces the `82b08e4c…` build of 2026-08-15, after the output-writing fix
+(see "Host memory fix" below). The checkpoint is unchanged.
 
 ### Task 4 — Proton MRI
 
 - File: `doserad_proton_ct/dist/proton-mri/doserad2026-proton-mri.tar.gz`
-- Dung lượng: 3,934,315,956 byte
+- Size: 3,934,315,956 bytes
 - SHA-256: `9099c2eed0c2304e3ca8f975dc3523beae69cb1a94c5516be1c3f87a58f627b7`
 - Model SHA-256: `ffddd2a90642bc9bc8549b21e7434ecedfe8bba14f90650a918b787188e2fa4c`
 - Docker image: `sha256:a0a442c0409caa31decb7aa36b3e0e5500e96de4ecdf49e5a4e2827c4ff2bafd`
 
-Bản này thay bản `dcfe6bb6…` ngày 2026-08-15. Checkpoint không đổi.
+This archive replaces the `dcfe6bb6…` build of 2026-08-15. The checkpoint is unchanged.
 
-Hai archive đều đã qua `gzip -t`, đều là `linux/amd64` và mang
-`org.grand-challenge.api-method=invoke`, với `TASK=proton-ct` và
-`TASK=proton-mri` tương ứng.
+Both archives pass `gzip -t`, are `linux/amd64`, and carry
+`org.grand-challenge.api-method=invoke` with `TASK=proton-ct` and `TASK=proton-mri`
+respectively.
 
-## Sửa host memory (2026-08-16)
+## Host memory fix (2026-08-16)
 
-Bản trước giữ toàn bộ dose map của một run trong RAM rồi mới gọi
-`sitk.JoinSeries` ở cuối. Đo trên grid validation thật `120×447×449`
-(91.9 MiB mỗi map), 64 map:
+The previous build held every dose map of a run in RAM and only called
+`sitk.JoinSeries` at the end. Measured on the real validation grid `120×447×449`
+(91.9 MiB per map), 64 maps:
 
-| Cách ghi | Peak RSS | Output |
+| Writing strategy | Peak RSS | Output |
 |---|---:|---:|
-| Buffer + JoinSeries | 12.143 GiB | 6,165,596,492 byte |
-| Streaming writer | 0.660 GiB | 6,165,596,492 byte |
+| Buffer + JoinSeries | 12.143 GiB | 6,165,596,492 bytes |
+| Streaming writer | 0.660 GiB | 6,165,596,492 bytes |
 
-Peak của bản buffer bằng khoảng 2.1× kích thước stack vì `JoinSeries` tạo thêm
-một bản copy đầy đủ. Ngoại suy tới 500 beamlet: 44.9 GiB chỉ riêng các frame,
-tức khoảng 90 GiB lúc copy. Instance A10G của Grand Challenge cho tối đa 31 GiB
-DRAM khả dụng (`ml.g5.2xlarge`, đã trừ 1 GiB reserved), `ml.g5.xlarge` chỉ 15
-GiB. Bản streaming ghi thẳng frame vào offset `header + idx_in_output *
-frame_bytes` nên peak chỉ còn một frame, và không phụ thuộc thứ tự beamlet hoàn
-thành.
+The buffered version peaks at roughly 2.1× the size of the stack, because `JoinSeries`
+creates an additional full copy. Extrapolated to 500 beamlets: 44.9 GiB for the frames
+alone, so about 90 GiB at the moment of the copy. The Grand Challenge A10G instance
+allows at most 31 GiB of usable DRAM (`ml.g5.2xlarge`, after 1 GiB reserved), and
+`ml.g5.xlarge` only 15 GiB. The streaming version writes each frame straight to offset
+`header + idx_in_output * frame_bytes`, so the peak is a single frame and does not depend
+on the order in which beamlets finish.
 
-Output không đổi: header do chính SimpleITK sinh từ probe 1×1×1×1, chỉ patch
-`DimSize`. Đã kiểm chứng byte-identical với `JoinSeries` trên **cả 75** geometry
-CT thật của tập train (0 mismatch), cùng 17 test trong
-`doserad_proton_ct/tests/`.
+The output is unchanged: the header is generated by SimpleITK itself from a 1×1×1×1
+probe, with only `DimSize` patched. Verified byte-identical against `JoinSeries` on
+**all 75** real CT geometries of the training set (0 mismatches), together with the 17
+tests in `doserad_proton_ct/tests/`.
 
-Container gate chạy lại offline sau khi sửa, cho **cả hai task**
-(`submission/smoke_test.sh proton-ct 4` và `... proton-mri 4`): `/health = 200`,
-`/invoke = 201`, slot 1 là stack 4D đúng 4 frame, 9 slot còn lại là placeholder
-1×1×1×1.
+The container gate was re-run offline after the fix, for **both tasks**
+(`submission/smoke_test.sh proton-ct 4` and `... proton-mri 4`): `/health = 200`,
+`/invoke = 201`, slot 1 a 4D stack of exactly 4 frames, and the remaining 9 slots
+1×1×1×1 placeholders.
 
-## Hai lỗi phát hiện thêm khi kiểm tra
+## Further issues found during review
 
-**Fixture smoke test trước đây đưa dữ liệu rác vào container.**
-`create_submission_smoke_fixture.py` ghi MHA với `CompressedData = True` nhưng
-không có `CompressedDataSize`. MetaIO in "Uncompress failed" rồi trả về bộ nhớ
-chưa khởi tạo thay vì báo lỗi, nên ảnh input có giá trị tới 1.8e+36. Mọi smoke
-test trước đó chỉ chứng minh phần plumbing, không chứng minh phần số học. Đã
-chuyển sang ghi uncompressed.
+**The smoke-test fixture had been feeding garbage into the container.**
+`create_submission_smoke_fixture.py` wrote MHA files with `CompressedData = True` but
+without `CompressedDataSize`. MetaIO printed "Uncompress failed" and then returned
+uninitialized memory instead of raising, so input images carried values up to 1.8e+36.
+Every earlier smoke test therefore proved only the plumbing, never the arithmetic. The
+fixture now writes uncompressed.
 
-**Phantom MRI của fixture bị suy biến.** Body mask cho MRI là
-`image <= bounds[0]` với `bounds[0]` là phân vị 0.5 của các voxel dương. Phantom
-cũ đặt toàn bộ foreground bằng đúng 1.0, nên `bounds[0] = 1.0` và mask xoá sạch
-cả volume: smoke test Task 4 trả về `peak_dose = 0` bất kể model làm gì. Trên
-MRI validation thật, mask chỉ xoá thêm 0.14–0.34% ngoài phần background
-(`1ABB039` 0.336%, `1ABB041` 0.136%, `1ABB042` 0.156%), nên đây là lỗi của
-fixture, không phải của inference. Sau khi đổi sang phantom có gradient,
-Task 4 cho `peak_dose = 7.14e-05`, tương đương Task 3 (`7.61e-05`).
+**The fixture's MRI phantom was degenerate.** The body mask for MRI is
+`image <= bounds[0]`, where `bounds[0]` is the 0.5 percentile of the positive voxels.
+The old phantom set the entire foreground to exactly 1.0, so `bounds[0] = 1.0` and the
+mask erased the whole volume: the Task 4 smoke test returned `peak_dose = 0` regardless
+of what the model did. On real validation MRI the mask removes only a further 0.14–0.34%
+beyond the background (`1ABB039` 0.336%, `1ABB041` 0.136%, `1ABB042` 0.156%), so this was
+a fault in the fixture, not in inference. With a gradient phantom instead, Task 4 gives
+`peak_dose = 7.14e-05`, comparable to Task 3 (`7.61e-05`).
 
-**Cutoff có thể xoá sạch dose map.** Prediction thô đạt cực đại 7.61e-05
-(Task 3) và 7.14e-05 (Task 4), trong khi `minimum_cutoff` của ví dụ trong đặc tả
-là 0.02, tức lớn hơn khoảng 260–280 lần. `dose_scale` của checkpoint là
-1.1307e-03 và audit tập train cho per-map max trong khoảng 4.84e-04 đến
-1.64e-03, nên nếu hidden test dùng cutoff 0.02 với cùng đơn vị thì mọi map đều
-thành 0. Container vẫn tuân thủ đặc tả (bắt buộc phải zero dưới cutoff), nhưng
-nay in cảnh báo kèm max trước cutoff và `peak_dose` của cả run, để log
-preliminary phát hiện ngay sai đơn vị thay vì âm thầm nộp toàn số 0. Metadata
-tập train không có `minimum_cutoff`, nên không thể chốt câu này bằng dữ liệu
-local.
+**The cutoff could zero out an entire dose map.** Raw predictions peak at 7.61e-05
+(Task 3) and 7.14e-05 (Task 4), while the `minimum_cutoff` in the specification's example
+is 0.02 — roughly 260–280 times larger. The checkpoint's `dose_scale` is 1.1307e-03 and
+an audit of the training set puts the per-map maximum between 4.84e-04 and 1.64e-03, so
+if the hidden test applies a cutoff of 0.02 in the same units, every map becomes 0.
+The container still follows the specification (zeroing below the cutoff is mandatory),
+but it now prints a warning with the pre-cutoff maximum and the `peak_dose` of the whole
+run, so that a preliminary log exposes a unit mismatch immediately instead of silently
+submitting all zeros. The training metadata contains no `minimum_cutoff`, so this cannot
+be settled with local data.
 
-## Đánh giá khả năng cạnh tranh
+## Assessment of competitiveness
 
-Local validation cho thấy hai model ổn định và Task 3/4 đã vượt mọi gate kỹ
-thuật local. Tuy nhiên không thể suy ra vị trí top vì leaderboard còn dùng
-plan-level MAE, local gamma 1%/1 mm, DVH score và runtime A10G; các metric này
-không có ground truth hidden để tái tạo local. Lượt preliminary đầu nên dùng
-hai archive chính ở trên, sau khi cảnh báo IDD trên trang chính thức biến mất.
-Kết quả preliminary sẽ quyết định có dùng lượt tiếp theo cho checkpoint thiên
-IDD hay tiếp tục tối ưu accuracy/runtime.
+Local validation shows two stable models, and Tasks 3 and 4 clear every local technical
+gate. A top placement still cannot be inferred, because the leaderboard also uses
+plan-level MAE, local gamma 1%/1 mm, the DVH score and A10G runtime, and none of these
+have hidden ground truth that can be reproduced locally. The first preliminary attempt
+should use the two primary archives above, once the IDD warning on the official site is
+gone. The preliminary result will decide whether the next attempt goes to the IDD-leaning
+checkpoint or to further accuracy/runtime optimization.
