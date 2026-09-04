@@ -113,18 +113,30 @@ dose.
 
 ### Task 4 — proton dose on MRI
 
-A 3D residual U-Net (31.4 M parameters, 4 levels, GroupNorm, SiLU activations) trained on
-the challenge MRI data to predict a synthetic density map, followed by the same analytic
-pencil-beam engine used in Task 3. The network takes 10 input channels: MRI intensity,
-body/density mask, ray geometry, Gaussian spot profile, energy spread and spatial
-coordinates. Training uses a positive-dose-biased patch sampler with 96³ patches, AMP, and
-gradient accumulation. Inference uses sliding-window with Gaussian blending.
+A hybrid approach: a learned density model feeds the same analytic pencil-beam engine
+used in Task 3. The two components are:
 
-The key insight came from diagnosing an incorrect density representation on MRI — found by
-comparing per-metric positions on the leaderboard rather than in the code — which reduced
-IDD curve distance from 0.295 to 0.024 in the preliminary phase. Task 4 warm-starts from
-the Task 3 (Proton CT) checkpoint, transferring learned beam physics while adapting the
-imaging modality.
+1. **Synthetic CT network** — a 3D residual U-Net (31.4 M parameters, 5 resolution levels,
+   base width 24, channel widths 24→48→96→192→384, GroupNorm, SiLU activations, softplus
+   output) maps single-channel MRI patches to synthetic CT in the encoded HU range [0, 1].
+   Training uses a tissue-weighted L1 loss (bone ×3, lung ×2) with AdamW, 96³ patches
+   biased to body interior, and cosine annealing over 40 epochs after a 7-epoch warm start
+   on the same data. No external data or pre-trained weights.
+
+2. **Pencil-beam engine** — identical to Task 3. Once the synthetic CT is generated per
+   volume (sliding-window, 25% overlap, Gaussian blending, ~11 s on the evaluation GPU),
+   beamlets are computed on CPU by a pool of single-threaded workers reading the density
+   copy-on-write. Thread pinning via `threadpoolctl` is critical: without it, adding
+   workers makes throughput worse, not better.
+
+The key insight: MRI carries no density information, and the two tissues at the extremes of
+the density scale — cortical bone (~1.8 g/cm³) and aerated lung (~0.3 g/cm³) — both appear
+dark on bSSFP MRI. Treating the body as water works for abdominal patients (beamlet MAE
+0.013–0.033) but fails badly in the thorax (0.18–0.29). Making density inference an explicit,
+separately supervised subproblem — using the challenge's paired MRI–CT volumes — reduced IDD
+curve distance from 0.168 (end-to-end dose network) to 0.024 in the preliminary phase.
+Checkpoint selection used downstream beamlet-dose fidelity on held-out patients, not HU
+reconstruction error.
 
 The full method for both tasks is described in the LNCS-format report submitted to the
 organizers.
