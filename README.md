@@ -27,6 +27,56 @@ competition to queue training and evaluation runs on a single workstation. They 
 as they were rather than cleaned up, so that the exact sequence behind each reported
 result stays visible.
 
+### Repository layout
+
+```
+doserad2026/
+├── doserad_proton_ct/                  # Task 3 (Proton CT) and shared proton code
+│   ├── src/doserad_proton/             # Core library (~1800 lines)
+│   │   ├── pencilbeam.py              #   pyRadPlan pencil-beam engine wrapper
+│   │   ├── inference.py               #   Sliding-window + slab-based inference
+│   │   ├── conditioning.py            #   10-channel proton beam conditioning
+│   │   └── data.py                    #   Dataset for 81k pencil-beam dose maps
+│   ├── scripts/                       #   Training, evaluation, benchmarking
+│   ├── submission/                    #   Dockerfile, FastAPI app, smoke tests
+│   ├── paper/                         #   Task 4 LNCS report
+│   ├── paper_t3/                      #   Task 3 LNCS report
+│   ├── tests/                         #   Unit tests
+│   └── artifacts/                     #   Evaluation metrics and benchmarks
+│
+├── doserad_proton_mri/                 # Task 4 (Proton MRI) — uses proton_ct code
+│   └── artifacts/                     #   Task 4-specific evaluation results
+│
+├── doserad_photon_ct/                  # Task 1 (Photon CT) — development only
+│   ├── src/doserad_photon_ct/          # Core library (~2250 lines)
+│   │   ├── model.py                   #   3D residual U-Net architecture
+│   │   ├── dataset.py                 #   Positive-dose-biased patch sampler
+│   │   ├── conditioning.py            #   CT/body/MLC/beam conditioning (6 ch)
+│   │   ├── inference.py               #   Sliding-window with Gaussian blending
+│   │   ├── losses.py                  #   Dose-aware composite loss
+│   │   ├── radiological.py            #   Radiological depth features
+│   │   ├── metrics.py                 #   Beam MAE, IDD evaluation
+│   │   ├── mha.py                     #   Compressed MHA reader/writer
+│   │   └── dataset_index.py           #   One-row-per-control-point manifest
+│   ├── scripts/
+│   ├── submission/
+│   ├── paper/                         #   Task 1 LNCS report
+│   ├── tests/
+│   └── artifacts/
+│
+├── doserad_photon_mri/                 # Task 2 (Photon MRI) — development only
+│   ├── src/doserad_photon_mri/         # MRI-adapted library (~1980 lines)
+│   ├── scripts/
+│   ├── submission/
+│   ├── tests/
+│   └── artifacts/
+│
+├── run_*.sh                            # Job queue scripts (kept as-is)
+├── DOSERAD2026_MASTER_ROADMAP.md       # Development roadmap
+├── DOSERAD_COMPETITION_RUNBOOK.md      # Training and submission runbook
+└── TASK3_TASK4_SUBMISSION_EVALUATION.md
+```
+
 ## Results — final test phase, published 1 September 2026
 
 | Task | Placement | Notes |
@@ -63,59 +113,159 @@ dose.
 
 ### Task 4 — proton dose on MRI
 
-<!-- VERIFY: this paragraph must describe the code path that produced the submitted
-     container, and must match the LNCS report. Rewrite if the folder contains a
-     different approach. -->
+A 3D residual U-Net (31.4 M parameters, 4 levels, GroupNorm, SiLU activations) trained on
+the challenge MRI data to predict a synthetic density map, followed by the same analytic
+pencil-beam engine used in Task 3. The network takes 10 input channels: MRI intensity,
+body/density mask, ray geometry, Gaussian spot profile, energy spread and spatial
+coordinates. Training uses a positive-dose-biased patch sampler with 96³ patches, AMP, and
+gradient accumulation. Inference uses sliding-window with Gaussian blending.
 
-A 3D residual U-Net (31.4 M parameters) trained on the challenge data, followed by the same
-analytic pencil-beam engine used in Task 3. Diagnosing an incorrect density representation
-on MRI — found by comparing per-metric positions on the leaderboard rather than in the code —
-reduced IDD curve distance from 0.295 to 0.024 in the preliminary phase.
+The key insight came from diagnosing an incorrect density representation on MRI — found by
+comparing per-metric positions on the leaderboard rather than in the code — which reduced
+IDD curve distance from 0.295 to 0.024 in the preliminary phase. Task 4 warm-starts from
+the Task 3 (Proton CT) checkpoint, transferring learned beam physics while adapting the
+imaging modality.
 
 The full method for both tasks is described in the LNCS-format report submitted to the
 organizers.
+
+### Task 1 and Task 2 — photon dose (development only)
+
+Task 1 uses the same 3D residual U-Net architecture with 6 conditioning channels: CT volume,
+body mask, MLC aperture projection, and divergent beam coordinates from SAD. It includes
+radiological depth features for physics-informed conditioning. Task 2 warm-starts from the
+Task 1 checkpoint and replaces CT with MRI input while keeping all other conditioning
+channels identical. Neither container met the runtime limit on the evaluation platform.
 
 ## Reproducing the results
 
 Challenge data is **not** included in this repository and is not redistributed here; it is
 available from the DoseRAD2026 organizers under the challenge's own terms.
 
-Environment:
+### Environment
 
 ```
 Python      3.13
-PyTorch     2.9.1 (CUDA 12.6)
+PyTorch     2.9.1 (CUDA 12.6, cuDNN 9)
 pyRadPlan   0.3.5
 NumPy       2.3.4
 SimpleITK   2.5.6
+FastAPI     0.141.1
 ```
+
+### Installation
 
 ```bash
-# install
 python3 -m venv .venv && source .venv/bin/activate
+
+# Core dependencies (Task 3 and Task 4 submission)
 pip install -r doserad_proton_ct/submission/requirements.txt
+
+# Pencil-beam engine (pyRadPlan + threadpoolctl)
 pip install -r doserad_proton_ct/submission/requirements-pb.txt
-pip install -r doserad_photon_ct/requirements.txt   # for Task 1/2
 
-# Task 3 — build and run the pencil-beam submission container
-cd doserad_proton_ct
-bash submission/package_model.sh
-bash submission/build.sh
-bash submission/smoke_test.sh
-
-# Task 4 — train the U-Net, then build submission
-cd doserad_proton_ct
-bash scripts/train_v5_mri.sh
-bash submission/build.sh
-bash submission/smoke_test.sh
-
-# Task 1 (development only) — train and evaluate
-cd doserad_photon_ct
-bash scripts/finalize_dataset.sh
-bash scripts/train_gpu.sh
+# For Task 1/2 training (torch, scipy, SimpleITK)
+pip install -r doserad_photon_ct/requirements.txt
 ```
 
-Containers were cross-built for x86 evaluation from an ARM64 workstation (NVIDIA DGX Spark).
+### Task 3 — build the pencil-beam submission container
+
+```bash
+cd doserad_proton_ct
+
+# Package model weights into dist/
+bash submission/package_model.sh
+
+# Build the Docker image (linux/amd64, based on pytorch/pytorch:2.9.1-cuda12.6-cudnn9-runtime)
+bash submission/build.sh
+
+# Save the image as a tarball for Grand Challenge upload
+bash submission/save_image.sh
+
+# Run a local smoke test — starts the container, hits /health and /invoke
+bash submission/smoke_test.sh
+```
+
+### Task 4 — train the U-Net, then build submission
+
+```bash
+cd doserad_proton_ct
+
+# Prepare the dataset (audit, manifest, splits)
+python3 scripts/prepare_dataset.py
+
+# Train Task 3 (CT) then Task 4 (MRI) sequentially on one GPU
+bash scripts/train_all_gpu.sh
+
+# Or train Task 4 (MRI) alone, warm-starting from a CT checkpoint
+bash scripts/train_v5_mri.sh
+
+# Evaluate a checkpoint against validation patients
+python3 scripts/evaluate_checkpoint.py \
+  --checkpoint runs/<run_name>/best.pt \
+  --device cuda --max-records 10 --batch-size 2
+
+# Build and test the submission container
+bash submission/build.sh
+bash submission/smoke_test.sh
+```
+
+### Task 1 (development only)
+
+```bash
+cd doserad_photon_ct
+
+# One-time data preparation: audit, manifest, splits, normalization stats
+bash scripts/finalize_dataset.sh
+
+# Train on GPU (3D U-Net, AMP, gradient accumulation)
+bash scripts/train_gpu.sh
+
+# Evaluate full validation volumes
+python3 scripts/evaluate_checkpoint.py \
+  --checkpoint runs/photon_ct_baseline/best.pt \
+  --device cuda --max-records 10 --batch-size 2
+
+# Predict a single dose volume
+python3 scripts/predict_volume.py \
+  --checkpoint runs/photon_ct_baseline/best.pt \
+  --patient-id 1ABB006 --beam-idx 0 --cp-idx 0 \
+  --device cuda --output artifacts/example_prediction.mha
+
+# Build submission container
+bash submission/build.sh
+bash submission/smoke_test.sh
+```
+
+### Running tests
+
+```bash
+# Task 1 tests (indexing, MHA I/O, conditioning, training, inference)
+cd doserad_photon_ct && python3 -m unittest discover -s tests -v
+
+# Task 3/4 tests (proton pipeline, submission output streaming)
+cd doserad_proton_ct && python3 -m unittest discover -s tests -v
+```
+
+### Hardware
+
+All training and development was done on a single NVIDIA DGX Spark (ARM64).
+Submission containers were cross-built for x86 (linux/amd64) evaluation using
+Docker buildx with QEMU emulation.
+
+## Evaluation metrics
+
+The official evaluation scores each submission on six axes, with runtime
+double-weighted in the final ranking:
+
+| Metric | Description |
+| --- | --- |
+| Beam MAE | Masked per-beam mean absolute error |
+| IDD | Integrated depth-dose curve distance |
+| Plan MAE | Plan-level stratified mean absolute error |
+| Gamma 1%/1mm | Local 3D gamma pass rate |
+| DVH | Dose-volume histogram clinical scores |
+| Runtime | Wall-clock inference time (double-weighted) |
 
 ## Challenge
 
@@ -123,3 +273,11 @@ DoseRAD2026 concluded on 2 September 2026 with 46 active participants and 565 al
 submissions, 59 of them in the final test phase. Organized by the German Cancer Research
 Center (DKFZ), the Paul Scherrer Institute, Delft University of Technology, Amsterdam
 University Medical Center and University Medical Center Utrecht, among others.
+
+### Official resources
+
+- **Challenge:** <https://doserad2026.grand-challenge.org/>
+- **Dataset:** <https://huggingface.co/datasets/LMUK-RADONC-PHYS-RES/DoseRAD2026>
+- **Baseline:** <https://github.com/DoseRAD2026/pyradplan-pb-baseline>
+- **Submission template:** <https://github.com/DoseRAD2026/example-submission>
+- **Evaluation code:** <https://github.com/DoseRAD2026/evaluation-setup>
