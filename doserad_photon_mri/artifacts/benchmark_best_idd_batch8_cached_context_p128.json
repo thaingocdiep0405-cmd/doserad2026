@@ -1,0 +1,30 @@
+{
+  "patient_id": "1ABB039",
+  "control_points": 16,
+  "mri_shape_zyx": [
+    180,
+    224,
+    224
+  ],
+  "patch_size_zyx": [
+    128,
+    128,
+    128
+  ],
+  "overlap": 0.25,
+  "condition_batch_size": 8,
+  "warmup_runs": 0,
+  "model_warmup": true,
+  "half_input": false,
+  "repeats": 3,
+  "durations": [
+    15.681726413080469,
+    9.404205058002844,
+    13.136233703931794
+  ],
+  "seconds": 13.136233703931794,
+  "seconds_per_control_point": 0.8210146064957371,
+  "estimated_seconds_for_181_control_points": 148.60364377572841,
+  "mean_masked_beam_mae": 0.1310952352359891,
+  "mean_idd_curve_distance": 0.483687391436704
+}

@@ -1,0 +1,184 @@
+{
+  "checkpoint": "/home/dev/huynk/ocr/doserad_photon_mri/runs/photon_mri_baseline/best_full.pt",
+  "split": "validation",
+  "device": "cuda",
+  "patch_size_zyx": [
+    128,
+    128,
+    128
+  ],
+  "records": 15,
+  "mean_masked_beam_mae": 0.07970228642225266,
+  "mean_normalized_rmse": 0.020149535530557237,
+  "mean_idd_curve_distance": 0.2845011118991307,
+  "mean_seconds": 2.747091497822354,
+  "skip_empty_aperture": true,
+  "mask_outside_body": true,
+  "details": [
+    {
+      "patient_id": "1ABB039",
+      "beam_idx": 1,
+      "cp_idx": 65,
+      "masked_beam_mae": 0.09844286739826202,
+      "idd_curve_distance": 0.5472369223426159,
+      "normalized_rmse": 0.03971009701490402,
+      "seconds": 3.7017700569704175,
+      "target_max": 5.831845192005858e-05,
+      "prediction_max": 5.683733252226375e-05
+    },
+    {
+      "patient_id": "1THB037",
+      "beam_idx": 0,
+      "cp_idx": 2,
+      "masked_beam_mae": 0.08129452913999557,
+      "idd_curve_distance": 0.23843097872296765,
+      "normalized_rmse": 0.01238515879958868,
+      "seconds": 2.7610661119688302,
+      "target_max": 6.156088056741282e-05,
+      "prediction_max": 5.825671541970223e-05
+    },
+    {
+      "patient_id": "1ABB042",
+      "beam_idx": 0,
+      "cp_idx": 82,
+      "masked_beam_mae": 0.05520264804363251,
+      "idd_curve_distance": 0.06810314808652562,
+      "normalized_rmse": 0.014277451671659946,
+      "seconds": 1.3334695710800588,
+      "target_max": 6.460180156864226e-05,
+      "prediction_max": 6.8925044615753e-05
+    },
+    {
+      "patient_id": "1THB120",
+      "beam_idx": 0,
+      "cp_idx": 113,
+      "masked_beam_mae": 0.09058719128370285,
+      "idd_curve_distance": 0.21164795036994727,
+      "normalized_rmse": 0.013398815877735615,
+      "seconds": 3.5059587080031633,
+      "target_max": 6.441558070946485e-05,
+      "prediction_max": 6.298333028098568e-05
+    },
+    {
+      "patient_id": "1THB221",
+      "beam_idx": 1,
+      "cp_idx": 114,
+      "masked_beam_mae": 0.05610288307070732,
+      "idd_curve_distance": 0.3454152257041158,
+      "normalized_rmse": 0.008572767488658428,
+      "seconds": 3.1639676401391625,
+      "target_max": 7.336602720897645e-05,
+      "prediction_max": 7.3648763645906e-05
+    },
+    {
+      "patient_id": "1ABB083",
+      "beam_idx": 0,
+      "cp_idx": 100,
+      "masked_beam_mae": 0.06706666946411133,
+      "idd_curve_distance": 0.27022370164750603,
+      "normalized_rmse": 0.031349074095487595,
+      "seconds": 3.171870985068381,
+      "target_max": 7.41059920983389e-05,
+      "prediction_max": 7.492569420719519e-05
+    },
+    {
+      "patient_id": "1THB008",
+      "beam_idx": 2,
+      "cp_idx": 100,
+      "masked_beam_mae": 0.09737875312566757,
+      "idd_curve_distance": 0.4814073630876992,
+      "normalized_rmse": 0.01702134869992733,
+      "seconds": 3.2335388239007443,
+      "target_max": 6.708801083732396e-05,
+      "prediction_max": 6.568955723196268e-05
+    },
+    {
+      "patient_id": "1ABB149",
+      "beam_idx": 0,
+      "cp_idx": 11,
+      "masked_beam_mae": 0.061572447419166565,
+      "idd_curve_distance": 0.2025135693053823,
+      "normalized_rmse": 0.02473030984401703,
+      "seconds": 1.600201597204432,
+      "target_max": 7.255737000377849e-05,
+      "prediction_max": 7.407856901409104e-05
+    },
+    {
+      "patient_id": "1ABB061",
+      "beam_idx": 2,
+      "cp_idx": 142,
+      "masked_beam_mae": 0.0541704036295414,
+      "idd_curve_distance": 0.20104093106805654,
+      "normalized_rmse": 0.01831999234855175,
+      "seconds": 3.3573471289128065,
+      "target_max": 9.696568304207176e-05,
+      "prediction_max": 8.987230103230104e-05
+    },
+    {
+      "patient_id": "1THB226",
+      "beam_idx": 1,
+      "cp_idx": 141,
+      "masked_beam_mae": 0.10370202362537384,
+      "idd_curve_distance": 0.23642294018205903,
+      "normalized_rmse": 0.01717045158147812,
+      "seconds": 2.2603967930190265,
+      "target_max": 7.844287029001862e-05,
+      "prediction_max": 8.275670552393422e-05
+    },
+    {
+      "patient_id": "1THB058",
+      "beam_idx": 1,
+      "cp_idx": 35,
+      "masked_beam_mae": 0.11175321787595749,
+      "idd_curve_distance": 0.08500043853979392,
+      "normalized_rmse": 0.011837505735456944,
+      "seconds": 2.933900782139972,
+      "target_max": 6.20278442511335e-05,
+      "prediction_max": 6.195265450514853e-05
+    },
+    {
+      "patient_id": "1THB122",
+      "beam_idx": 2,
+      "cp_idx": 46,
+      "masked_beam_mae": 0.07124632596969604,
+      "idd_curve_distance": 0.6875610579399549,
+      "normalized_rmse": 0.012055721133947372,
+      "seconds": 2.9123163900803775,
+      "target_max": 8.81108280736953e-05,
+      "prediction_max": 7.987619028426707e-05
+    },
+    {
+      "patient_id": "1THB017",
+      "beam_idx": 1,
+      "cp_idx": 77,
+      "masked_beam_mae": 0.06909488886594772,
+      "idd_curve_distance": 0.15841119527562153,
+      "normalized_rmse": 0.0075361416675150394,
+      "seconds": 2.9568405558820814,
+      "target_max": 7.99915796960704e-05,
+      "prediction_max": 8.006651478353888e-05
+    },
+    {
+      "patient_id": "1ABB135",
+      "beam_idx": 1,
+      "cp_idx": 176,
+      "masked_beam_mae": 0.10443063825368881,
+      "idd_curve_distance": 0.1416035552173536,
+      "normalized_rmse": 0.057354483753442764,
+      "seconds": 3.5543850800022483,
+      "target_max": 8.101598359644413e-05,
+      "prediction_max": 8.640342275612056e-05
+    },
+    {
+      "patient_id": "1ABB041",
+      "beam_idx": 2,
+      "cp_idx": 5,
+      "masked_beam_mae": 0.07348880916833878,
+      "idd_curve_distance": 0.3924977009973608,
+      "normalized_rmse": 0.016523713245987892,
+      "seconds": 0.7593422429636121,
+      "target_max": 6.801114795962349e-05,
+      "prediction_max": 7.329724030569196e-05
+    }
+  ]
+}

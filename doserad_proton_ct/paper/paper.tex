@@ -1,0 +1,211 @@
+\documentclass[runningheads]{llncs}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{multirow}
+\usepackage[hidelinks]{hyperref}
+\usepackage[utf8]{inputenc}
+
+\begin{document}
+
+\title{Hybrid Analytic Pencil-Beam Dose Calculation on MRI with a 3D Residual U-Net Synthetic CT for Proton Therapy}
+\titlerunning{Pencil-Beam Proton Dose on MRI via Synthetic CT}
+
+\author{Ngoc Diep Thai}
+\authorrunning{N.~D.~Thai}
+\institute{Hanoi Amsterdam High School for the Gifted, Hanoi, Vietnam\\
+\email{dieptn@thebluecompass.tech, thaingocdiep.0405@gmail.com}\\
+Grand Challenge team: \texttt{thaingocdiep}, algorithm \emph{Proton MRI Dose Engine v1}}
+
+\maketitle
+
+\begin{abstract}
+We describe our submission to the proton-dose-on-MRI task of the DoseRAD2026 challenge. Instead of training a network to predict dose directly, we combine an analytic pencil-beam dose engine with a learned density model: a 3D residual U-Net (31.4M parameters, 5 resolution levels, base width 24) translates the 0.35\,T bSSFP planning MRI into a synthetic CT, and the open-source pyRadPlan pencil-beam engine computes each beamlet's dose on that synthetic CT using the challenge-provided Hounsfield-to-density lookup table. The same pipeline serves both anatomical regions (thorax and abdomen) of the task. The synthetic-CT network is trained with a tissue-weighted L1 loss (bone $\times$3, lung $\times$2) using AdamW (learning rate $2\times10^{-4}$, cosine annealing, 40 epochs after a 7-epoch warm start) on $96^3$ patches of the challenge's paired MRI--CT volumes; MRI intensities are normalized by their 99th percentile and CT targets are encoded from $[-1024, 2000]$\,HU to $[0,1]$. No external data or pre-trained weights are used. At inference, the synthetic CT is generated once per volume by sliding-window prediction, and beamlets are computed on transverse slabs around the isocenter, parallelized over single-threaded worker processes. Checkpoint selection uses downstream beamlet-dose fidelity on held-out patients rather than HU error. Post-processing only applies the plan-specified minimum dose cutoff. On the preliminary test set the method reached a beamlet dose MAE of 0.0369, an IDD curve distance of 0.0244, and a standardized runtime of 399\,s, placing 13th of 29 leaderboard entries.
+\keywords{Proton therapy \and Dose calculation \and Synthetic CT \and MRI \and Pencil beam}
+\end{abstract}
+
+\section{Introduction}
+Online adaptive, MR-guided radiotherapy needs dose calculation that is both fast and accurate at the moment of treatment. For proton therapy this is especially demanding: the finite range of protons makes the dose distribution exquisitely sensitive to the mass density along each beamlet's path, and an error of a few percent in integrated stopping power shifts the Bragg peak by clinically relevant distances. Monte Carlo (MC) transport provides the accuracy but not the speed; analytic pencil-beam algorithms provide the speed but require a density map.
+
+MRI, the imaging modality of MR-Linac workflows, does not carry density information. Worse, the two tissues at the extremes of the density scale look alike on MRI: cortical bone and aerated lung both appear dark on a bSSFP acquisition while their mass densities sit near 1.8 and 0.3\,g/cm$^3$. No intensity threshold can separate them --- we measured that treating the whole body as water works acceptably for abdominal patients (beamlet MAE 0.013--0.033 on our validation split) but fails badly in the thorax (0.18--0.29). Spatial context, however, can separate them, and every DoseRAD2026 training case ships a CT deformably registered to its MRI.
+
+This observation drove our design for Task~4 (proton dose on MRI). Rather than asking a network to learn proton transport end-to-end from an input that lacks the single most important physical quantity, we split the problem into the part that is well suited to learning --- inferring density from anatomical context --- and the part that is well suited to physics --- transporting protons through a known density map. A 3D residual U-Net translates MRI to synthetic CT (sCT), and the open-source pyRadPlan analytic pencil-beam engine \cite{pyradplan,matrad} computes beamlet dose on the sCT. In our own earlier submissions to this task, a dose-prediction network operating on MRI-derived channels (with a constant density assumption) plateaued at an IDD curve distance of 0.168 on the preliminary test set; the hybrid described here reduced that to 0.024 while also running faster.
+
+\section{Methods}
+
+\subsection{Data}
+We used exclusively the DoseRAD2026 dataset \cite{doserad_data}: 75 training patients (36 abdominal, 39 thoracic), each with a 0.35\,T bSSFP planning MRI, a deformably registered CT on the same $1\times1\times3$\,mm$^3$ grid, per-beamlet plan metadata, and Geant4 \cite{geant4} Monte Carlo beamlet dose as ground truth (81{,}000 training beamlets, energies 31.7--200.8\,MeV). No additional public or private data and no pre-trained models were used.
+
+For hyperparameter and model selection we held out a fixed patient-level split of 15 validation patients (60 used for gradients), the same split across all our experiments, with seed 2026. Dose-level validation used 3 beamlets per validation patient (45 beamlets) sampled across energies, and a separate 23-beamlet thoracic subset for the failure analysis in Sec.~\ref{sec:slab}. The paired MRI--CT volumes of the same 60 training patients were the supervision for the synthetic-CT network; validation-patient voxels never contributed gradients to any component.
+
+\subsection{Model}
+The submitted algorithm has two components.
+
+\subsubsection{Synthetic-CT network.}
+A residual 3D U-Net \cite{unet,unet3d} maps a single-channel MRI patch to a single-channel synthetic-CT patch. The encoder--decoder has 5 resolution levels with base width 24 (channel widths 24, 48, 96, 192, 384), two pre-activation residual blocks per level, GroupNorm normalization and SiLU activations, strided $3^3$ convolutions for downsampling and $2^3$ transposed convolutions for upsampling, totalling 31.36M parameters. The output head is a $1^3$ convolution followed by a softplus; CT targets are therefore encoded into $[0,1]$ from the window $[-1024, 2000]$\,HU, keeping the whole HU range on the reachable positive side of the softplus. Weights are randomly initialized (the final run warm-starts from a 7-epoch run of the identical architecture on the same data; no external pre-training). Software: PyTorch, SimpleITK, NumPy.
+
+\subsubsection{Pencil-beam engine.}
+Beamlet dose is computed by pyRadPlan \cite{pyradplan}, the open-source Python successor of matRad \cite{matrad}, using its analytic proton pencil-beam algorithm with the \texttt{Generic} proton machine model. The Hounsfield-to-density conversion uses the lookup table shipped with the challenge's beam parameters, so the density interpretation matches the one used to generate the ground truth. Each beamlet is specified by its gantry angle, source and target position, and energy taken from the plan metadata; the requested energy is snapped to the nearest entry of the machine's energy table. The dose grid equals the CT grid, with air-offset correction enabled and a 25\,mm geometric lateral cutoff. The engine is used strictly as a forward dose calculator; no weights or beam model parameters were fitted to the Monte Carlo data.
+
+\subsection{Training}
+Only the synthetic-CT network is trained. Input MRI volumes are normalized by their 99th percentile of positive intensities (robust to the bright outliers bSSFP occasionally contains); CT targets are clipped to $[-1024, 2000]$\,HU and scaled to $[0,1]$. Training samples random $96^3$ patches whose center is biased to lie inside the body, so patches are not dominated by background air. No other augmentation is used --- the deformable MRI--CT registration is the scarce, quality-controlled resource, and geometric augmentation risks breaking exactly the voxel correspondence being learned.
+
+The loss is a tissue-weighted L1 in the encoded HU space,
+\begin{equation}
+\mathcal{L} = \operatorname{mean}\bigl(w \cdot |\hat{y} - y|\bigr), \qquad
+w = \begin{cases}
+3 & y > 200\ \text{HU (bone)}\\
+2 & y < -300\ \text{HU (lung)}\\
+1 & \text{otherwise,}
+\end{cases}
+\end{equation}
+because proton range is governed by the tissues at the density extremes: a 50\,HU error in bone displaces the Bragg peak far more than the same error in soft tissue.
+
+Optimization uses AdamW (weight decay $10^{-5}$), batch size 4, 500 steps per epoch, and mixed-precision (fp16) on a single GPU. A first run of 7 epochs at learning rate $2\times10^{-4}$ was followed by a warm-started run of 40 epochs at $1.5\times10^{-4}$ with cosine annealing ($\sim$16\,min/epoch).
+
+\subsubsection{Model selection.}
+Checkpoint selection deliberately did \emph{not} use validation HU error. From epoch $\sim$30 onward, HU MAE kept improving (35.8$\rightarrow$34.9) while downstream dose fidelity was flat: the epoch-30 and epoch-40 checkpoints gave IDD 0.0360 and 0.0358 on the 45 validation beamlets --- identical within noise. Candidate checkpoints (epochs 16, 30, 40) were therefore compared by running the full pencil-beam pipeline and measuring beamlet-dose error; the final checkpoint (epoch 40, validation MAE 34.9\,HU) was selected on that basis. A variant that applied the sCT correction only in lung and bone won in the thorax but lost overall and was rejected.
+
+\subsection{Inference pipeline}
+\label{sec:slab}
+At test time the container receives up to 10 MRI volumes and a metadata file listing beamlets per volume. Per volume, the sCT is generated once by sliding-window inference ($96^3$ windows, 25\% overlap, Gaussian blending, fp16, batch 4; $\sim$11\,s on the challenge's A10G GPU) --- a per-image cost that is amortized over all of that image's beamlets. All subsequent dose computation runs on CPU.
+
+\subsubsection{Transverse slab restriction.}
+The challenge's proton beamlets travel exactly in the transverse plane, so slices away from the isocenter carry no dose. Each beamlet is therefore computed on a slab of $\pm$12 slices ($\pm$36\,mm) around its isocenter slice, with the transverse plane kept \emph{whole}. This last point matters: an earlier version also cropped the transverse plane to a corridor around the ray, which silently broke thoracic beamlets. Cropping through the body corrupts the engine's own body segmentation and air-offset correction, so the water-equivalent depth assigned to the protons is wrong; widening the corridor does not fix it (a 120\,mm margin still recovered only 15\% of the dose on the worst case, while the full plane recovered it entirely). Table~\ref{tab:slab} quantifies the repair on the 23-beamlet thoracic subset against real CT: mean IDD drops from 0.135 to 0.018 and no beamlet loses dose anymore, at 2.1\,s instead of 1.0\,s per beamlet. Doubling the slab to $\pm$24 slices changes the accuracy by less than $10^{-4}$, so $\pm$12 is where the slab stops paying.
+
+\begin{table}[t]
+\centering
+\caption{Region-of-interest strategy, measured on 23 thoracic validation beamlets with real CT as density. ``Dose kept'' is the fraction of Monte-Carlo dose inside the computed region.}
+\label{tab:slab}
+\begin{tabular}{lccccc}
+\toprule
+ROI strategy & MAE & IDD & Dose kept & s/beamlet & failed beamlets\\
+\midrule
+Corridor crop (x, y and z) & 0.116 & 0.135 & 0.71 & 0.97 & 12/23\\
+Transverse slab, $z\pm12$ slices & \textbf{0.040} & \textbf{0.018} & \textbf{1.00} & 2.10 & \textbf{0/23}\\
+Transverse slab, $z\pm24$ slices & 0.040 & 0.018 & 1.00 & 3.93 & 0/23\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Parallelization.}
+pyRadPlan's pencil-beam computation is single-threaded CPU work and beamlets are independent, so beamlets are farmed out to a pool of worker processes forked \emph{after} the density volume exists --- workers read it copy-on-write instead of receiving a hundred-megabyte copy --- and return only the nonzero-cropped slab of their dose. The decisive detail is thread pinning: the numerical libraries inside each dose call spawn their own threads, so adding workers without limiting them to one thread each makes throughput \emph{worse} (Table~\ref{tab:parallel}). With \texttt{threadpoolctl} limiting each worker to a single thread, 8 workers reach 0.33\,s per beamlet on a 20-core development machine, a 6.7$\times$ speedup over serial execution.
+
+\begin{table}[t]
+\centering
+\caption{Worker-pool scaling, 24 beamlets of one thoracic patient on a 20-core development machine.}
+\label{tab:parallel}
+\begin{tabular}{lcc}
+\toprule
+Configuration & s/beamlet & Projected 309-map case\\
+\midrule
+Serial & 2.21 & 11.4\,min\\
+8 workers, library threads free & 1.40 & 7.2\,min\\
+4 workers $\times$ 1 thread & 0.51 & 2.6\,min\\
+8 workers $\times$ 1 thread & \textbf{0.33} & \textbf{1.7\,min}\\
+12 workers $\times$ 1 thread & 1.22 & 6.3\,min (oversubscribed)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Post-processing.}
+The only post-processing is the plan-specified minimum dose cutoff: voxels at or below each map's \texttt{minimum\_cutoff} are zeroed. Dose maps are written incrementally into the stacked output file as beamlets complete, so writing overlaps computation.
+
+\subsection{Evaluation}
+We report the challenge's official metrics \cite{doserad_metrics}: masked per-beamlet MAE (voxels $\geq$10\% of the beamlet's maximum ground-truth dose, normalized by that maximum), integrated depth-dose (IDD) curve RMS distance normalized by the ground-truth peak, stratified plan-level MAE (high/mid/low dose strata), 3D local gamma pass rate at 1\%/1\,mm, a plan-level DVH error, and runtime. Runtime is not wall-clock: the organizers fit $T = t_{\mathrm{fix}} + N_{\mathrm{image}} \cdot t_{\mathrm{image}} + N_{\mathrm{map}} \cdot t_{\mathrm{map}}$ across evaluation jobs and report $T$ at a standardized case of 1 image and 500 beamlets, with entries above 500\,s excluded from the official ranking. Because the standardized case is dominated by the per-map term, the per-beamlet cost of the engine is what the runtime metric actually measures; the once-per-image sCT generation ($\sim$11\,s) lands in $t_{\mathrm{image}}$ and is nearly invisible in $T$. Locally we used the same masked MAE and IDD definitions on validation beamlets; leaderboard means and standard deviations are per-patient statistics computed by the organizers. We did not compute confidence intervals beyond these dispersion estimates, and no explainability methods were used --- the physics component is inherently interpretable, which is part of the design's appeal.
+
+\section{Results}
+
+\subsection{Density source ablation}
+Table~\ref{tab:density} isolates the contribution of the synthetic CT on the 45 validation beamlets, with everything else fixed. Water-only density --- the assumption our earlier dose-prediction networks were implicitly limited to --- gives IDD 0.142. The synthetic CT brings this to 0.036, recovering 84\% of the gap to the real registered CT (0.015), which constitutes the oracle for this design. The remaining gap is the sCT's structured errors along the beam path, which accumulate in a way that random noise would not.
+
+\begin{table}[t]
+\centering
+\caption{Density source ablation on 45 validation beamlets (15 patients $\times$ 3), identical engine and settings. Real CT is an oracle unavailable at test time.}
+\label{tab:density}
+\begin{tabular}{lcc}
+\toprule
+Density source & Beamlet MAE & IDD distance\\
+\midrule
+Water body & 0.108 & 0.142\\
+Synthetic CT (ours) & \textbf{0.042} & \textbf{0.036}\\
+Real registered CT (oracle) & 0.032 & 0.015\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Preliminary test phase}
+Table~\ref{tab:lb} shows our best preliminary-phase submission (2026-08-24) next to our earlier end-to-end dose-prediction network on the same phase. The hybrid improves every accuracy metric at once --- most sharply the proton-specific ones: IDD drops 6.9$\times$ (0.168$\rightarrow$0.024) and the 1\%/1\,mm gamma pass rate doubles (38.6$\rightarrow$76.1). The standardized runtime of 398.8\,s sits within the 500\,s exclusion threshold, ranking 15th of 29 on runtime. The submission placed \textbf{13th of 29} leaderboard entries overall (mean metric position 14.3). Its strongest single metric is the DVH error (7th); its weakest is the per-beamlet MAE (19th), consistent with the known lateral-scatter limits of analytic pencil beams discussed below.
+
+\begin{table}[t]
+\centering
+\caption{Official preliminary-test leaderboard metrics (proton dose on MRI), our submissions. Parenthesized values are per-metric ranks among 29 entries. ``Dose network'' is our earlier end-to-end U-Net submission, whose 571\,s runtime exceeded the 500\,s threshold and was therefore excluded from the official ranking; ``Hybrid PB+sCT'' is the submitted algorithm described in this paper.}
+\label{tab:lb}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcc}
+\toprule
+Metric & Dose network (ours, earlier) & Hybrid PB+sCT (submitted)\\
+\midrule
+Beamlet MAE $\downarrow$ & 0.0615 $\pm$ 0.0066 & \textbf{0.0369 $\pm$ 0.0184} (19)\\
+IDD distance $\downarrow$ & 0.1683 $\pm$ 0.0298 & \textbf{0.0244 $\pm$ 0.0170} (13)\\
+Stratified plan MAE $\downarrow$ & 0.1095 $\pm$ 0.0317 & \textbf{0.0313 $\pm$ 0.0129} (15)\\
+Gamma 1\%/1\,mm [\%] $\uparrow$ & 38.55 $\pm$ 5.81 & \textbf{76.14 $\pm$ 12.25} (16)\\
+DVH error $\downarrow$ & 12.57 $\pm$ 6.77 & \textbf{4.26 $\pm$ 3.66} (7)\\
+Standardized runtime [s] $\downarrow$ & 571.0 & \textbf{398.8} (15)\\
+\midrule
+Overall rank & 26th / 29 & \textbf{13th / 29}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Where the residual error lives}
+Stratifying the validation beamlets by region shows the abdomen essentially solved (sCT IDD $\approx$0.04 against an oracle $\approx$0.014) while the thorax carries most of the remaining error. Two mechanisms contribute. First, sCT errors in the thorax are the hardest kind: lung/bone boundaries where a misclassified voxel changes the local density by a factor of six. Second, the analytic engine itself underestimates the broad low-dose halo that large-angle scattering produces in lung, which the 25\,mm lateral cutoff truncates; this halo costs beamlet MAE and gamma rather than range accuracy, matching the leaderboard profile (range-sensitive IDD strong, voxel-wise MAE weaker). Run-time on our hardware is 0.33\,s per beamlet (8 workers); the leaderboard's standardized figure of 398.8\,s at 500 beamlets reflects the evaluation instance's smaller CPU budget.
+
+\section{Discussion}
+The central lesson of our participation is that on MRI the binding constraint for proton dose is not model capacity but \emph{information}: no dose-prediction network can locate a Bragg peak whose position depends on densities the input does not contain. Making density inference an explicit, separately supervised subproblem --- for which the challenge data is ideally suited, since every patient has a registered CT --- turned our weakest metrics into competitive ones overnight, with a fully interpretable physics engine downstream.
+
+Limitations. (i) The analytic pencil beam is a first-order transport model; its treatment of multiple Coulomb scattering in low-density lung truncates the lateral halo, our largest remaining accuracy deficit, and the generic machine model's single-Gaussian spot only approximates the challenge's beam model. (ii) The sCT network is trained on 60 patients from a single scanner and sequence (0.35\,T bSSFP) and two anatomical regions; generalization to other field strengths, sequences, or sites is untested, and deformable-registration residuals in the training pairs bound the achievable fidelity. (iii) Checkpoint selection by beamlet-dose fidelity used 45 beamlets, a small sample whose noise floor we could measure but not eliminate. (iv) The runtime metric rewards per-beamlet cost; our engine's per-beamlet overhead (body segmentation, machine setup) is paid redundantly for beamlets sharing a slab, and batching it away is the clearest path to further runtime and rank improvement. (v) Results are reported on the preliminary test set of a single challenge; the final-phase test set is evaluated blind.
+
+\section{Author Contributions}
+Following the CRediT taxonomy, Ngoc Diep Thai: Conceptualization, Methodology, Software, Validation, Formal analysis, Investigation, Data curation, Writing --- original draft, Writing --- review \& editing, Visualization.
+
+\section{Compliance with Ethical Standards}
+This study was performed in line with the principles of the Declaration of Helsinki. No human subjects were recruited; all data were provided by the DoseRAD2026 challenge organizers under their data use agreement.
+
+\subsection*{Funding}
+This work received no external funding.
+
+\subsection*{Conflict of Interest}
+The author declares no conflict of interest.
+
+\subsection*{Data and Code Availability}
+The DoseRAD2026 dataset is available through the Grand Challenge platform \cite{doserad_data}. Code for the submitted algorithm will be released upon conclusion of the challenge as required by the challenge rules.
+
+\section*{Acknowledgments}
+We thank the DoseRAD2026 organizers for the dataset, the example submission containers, and the responsive support forum, and the pyRadPlan and matRad developers for their open-source dose engines.
+
+\begin{thebibliography}{8}
+\bibitem{doserad_data}
+DoseRAD2026 organizers: The DoseRAD2026 dataset: paired CT--MRI volumes with beam-level Monte Carlo dose for photon and proton therapy. arXiv preprint \doi{10.48550/arXiv.2604.12778} (2026)
+
+\bibitem{doserad_metrics}
+DoseRAD2026 challenge: Metrics and ranking. \url{https://doserad2026.grand-challenge.org/metrics-and-ranking/}, accessed 2026-08-26
+
+\bibitem{pyradplan}
+pyRadPlan developers: pyRadPlan: an open-source, Python-native treatment planning toolkit. \url{https://github.com/pyRadPlan/pyRadPlan}, accessed 2026-08-26
+
+\bibitem{matrad}
+Wieser, H.P., Cisternas, E., Wahl, N., et al.: Development of the open-source dose calculation and optimization toolkit matRad. Medical Physics \textbf{44}(6), 2556--2568 (2017)
+
+\bibitem{geant4}
+Agostinelli, S., et al.: Geant4 --- a simulation toolkit. Nuclear Instruments and Methods in Physics Research A \textbf{506}(3), 250--303 (2003)
+
+\bibitem{unet}
+Ronneberger, O., Fischer, P., Brox, T.: U-Net: Convolutional networks for biomedical image segmentation. In: MICCAI 2015, LNCS 9351, pp. 234--241. Springer (2015)
+
+\bibitem{unet3d}
+\c{C}i\c{c}ek, \"O., Abdulkadir, A., Lienkamp, S.S., Brox, T., Ronneberger, O.: 3D U-Net: Learning dense volumetric segmentation from sparse annotation. In: MICCAI 2016, LNCS 9901, pp. 424--432. Springer (2016)
+\end{thebibliography}
+
+\end{document}

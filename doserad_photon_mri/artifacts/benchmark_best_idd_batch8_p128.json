@@ -1,0 +1,21 @@
+{
+  "patient_id": "1ABB039",
+  "control_points": 16,
+  "mri_shape_zyx": [
+    180,
+    224,
+    224
+  ],
+  "patch_size_zyx": [
+    128,
+    128,
+    128
+  ],
+  "overlap": 0.25,
+  "condition_batch_size": 8,
+  "seconds": 14.497193680843338,
+  "seconds_per_control_point": 0.9060746050527086,
+  "estimated_seconds_for_181_control_points": 163.99950351454027,
+  "mean_masked_beam_mae": 0.13109421310946345,
+  "mean_idd_curve_distance": 0.48368659306394896
+}

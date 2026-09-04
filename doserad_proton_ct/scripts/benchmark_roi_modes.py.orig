@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Compare ROI window-pruning modes against the baseline batched pipeline.
+
+For every validation patient the selected beamlets run through
+``predict_conditioned_arrays`` once per mode, with the exact submission
+configuration. Reported per mode: wall time, accuracy metrics against ground
+truth, and the maximum voxel deviation from the baseline (``off``) prediction,
+which proves or disproves numerical parity.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import random
+import sys
+import time
+from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
+import torch
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+WORKSPACE = PROJECT_ROOT.parent
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+sys.path.insert(0, str(WORKSPACE / "doserad_photon_ct" / "src"))
+
+from doserad_photon_ct.conditioning import SpatialGeometry  # noqa: E402
+from doserad_photon_ct.dataset_index import read_mha_header  # noqa: E402
+from doserad_photon_ct.metrics import idd_curve_distance  # noqa: E402
+from doserad_photon_ct.mha import load_mha_array  # noqa: E402
+from doserad_photon_ct.model import ModelConfig, PhotonDoseUNet3D  # noqa: E402
+from doserad_proton.data import ProtonRecord, load_split_patients, read_manifest  # noqa: E402
+from doserad_proton.inference import predict_conditioned_arrays  # noqa: E402
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--modality", choices=("ct", "mri"), default="ct")
+    parser.add_argument("--manifest", type=Path, default=PROJECT_ROOT / "artifacts" / "manifest.csv")
+    parser.add_argument("--splits", type=Path, default=PROJECT_ROOT / "artifacts" / "splits.json")
+    parser.add_argument("--split", default="validation")
+    parser.add_argument("--max-patients", type=int, default=15)
+    parser.add_argument("--records-per-patient", type=int, default=3)
+    parser.add_argument("--patch-size", type=int, nargs=3, default=(128, 128, 128))
+    parser.add_argument("--overlap", type=float, default=0.0)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--ray-gate-threshold", type=float, default=1.0e-4)
+    parser.add_argument(
+        "--prediction-scale",
+        type=float,
+        default=1.0,
+        help="positive global output calibration applied before metrics",
+    )
+    parser.add_argument("--distal-margin-mm", type=float, default=80.0)
+    parser.add_argument("--modes", nargs="+", default=("off", "corridor", "capsule"))
+    parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--output", type=Path, required=True)
+    return parser.parse_args()
+
+
+def select_records(args: argparse.Namespace) -> list[ProtonRecord]:
+    """Same fixed cohort as evaluate_checkpoint.py (same seed arithmetic)."""
+    patients = load_split_patients(args.splits, args.split)
+    grouped: dict[str, list[ProtonRecord]] = defaultdict(list)
+    for record in read_manifest(args.manifest):
+        if record.patient_id in patients:
+            grouped[record.patient_id].append(record)
+    patient_ids = sorted(grouped)
+    random.Random(args.seed + 17).shuffle(patient_ids)
+    selected: list[ProtonRecord] = []
+    for patient_id in patient_ids[: args.max_patients]:
+        records = sorted(
+            grouped[patient_id],
+            key=lambda item: (item.beam_idx, item.ray_idx, item.beamlet_idx),
+        )
+        count = min(args.records_per_patient, len(records))
+        indices = [
+            min(len(records) - 1, int((slot + 0.5) * len(records) / count))
+            for slot in range(count)
+        ]
+        selected.extend(records[index] for index in indices)
+    return selected
+
+
+def record_metrics(
+    prediction: np.ndarray, record: ProtonRecord, spacing: np.ndarray
+) -> dict[str, float]:
+    target = np.asarray(load_mha_array(record.dose_path), dtype=np.float32)
+    maximum = float(target.max())
+    mask = target >= 0.1 * maximum
+    source = np.asarray(record.condition.ray_source_xyz, dtype=np.float64)
+    target_pos = np.asarray(record.condition.ray_target_xyz, dtype=np.float64)
+    direction = target_pos - source
+    direction /= np.linalg.norm(direction)
+    return {
+        "masked_mae": float(np.mean(np.abs(prediction[mask] - target[mask])) / maximum),
+        "nrmse": float(np.sqrt(np.mean((prediction - target) ** 2)) / maximum),
+        "idd_distance": float(idd_curve_distance(prediction, target, direction, spacing)),
+        "scale_ratio": float(
+            prediction[mask].mean() / max(float(target[mask].mean()), 1.0e-12)
+        ),
+    }
+
+
+def main() -> int:
+    args = parse_args()
+    if args.prediction_scale <= 0.0:
+        raise ValueError("--prediction-scale must be positive")
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    model = PhotonDoseUNet3D(ModelConfig(**checkpoint["model_config"])).to(device)
+    model.load_state_dict(checkpoint["model"])
+    model.eval()
+    dose_scale = float(checkpoint["training_config"]["dose_scale"])
+    range_channels = int(checkpoint["model_config"]["in_channels"]) >= 12
+    print(f"range_channels={range_channels}", flush=True)
+
+    records = select_records(args)
+    by_patient: dict[str, list[ProtonRecord]] = defaultdict(list)
+    for record in records:
+        by_patient[record.patient_id].append(record)
+    print(f"patients={len(by_patient)} records={len(records)}", flush=True)
+
+    results: dict[str, dict] = {}
+    baseline_predictions: dict[str, list[np.ndarray]] = {}
+    for mode in args.modes:
+        rows: list[dict] = []
+        mode_seconds = 0.0
+        parity_max = 0.0
+        for patient_id, patient_records in sorted(by_patient.items()):
+            image_path = (
+                patient_records[0].ct_path
+                if args.modality == "ct"
+                else patient_records[0].mr_path
+            )
+            image = np.asarray(load_mha_array(image_path), dtype=np.float32)
+            header = read_mha_header(image_path)
+            geometry = SpatialGeometry.from_mha_header(header)
+            spacing = np.asarray(
+                [float(value) for value in header["ElementSpacing"].split()],
+                dtype=np.float64,
+            )
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            started = time.perf_counter()
+            predictions = predict_conditioned_arrays(
+                model,
+                image=image,
+                geometry=geometry,
+                conditions=[record.condition for record in patient_records],
+                modality=args.modality,
+                device=device,
+                patch_size_zyx=tuple(args.patch_size),
+                dose_scale=dose_scale,
+                overlap=args.overlap,
+                condition_batch_size=args.batch_size,
+                amp=True,
+                skip_empty_ray=True,
+                mask_outside_body=True,
+                relative_cutoff=0.0,
+                ray_gate_threshold=args.ray_gate_threshold,
+                pad_to_batch_size=True,
+                roi_mode=mode,
+                roi_distal_margin_mm=args.distal_margin_mm,
+                range_channels=range_channels,
+                wepl_cache={},
+            )
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            elapsed = time.perf_counter() - started
+            mode_seconds += elapsed
+            if mode == "off":
+                baseline_predictions[patient_id] = predictions
+            else:
+                reference = baseline_predictions.get(patient_id)
+                if reference is not None:
+                    for prediction, base in zip(predictions, reference):
+                        parity_max = max(
+                            parity_max, float(np.max(np.abs(prediction - base)))
+                        )
+            for record, prediction in zip(patient_records, predictions):
+                rows.append(
+                    {
+                        "patient_id": patient_id,
+                        "beam_idx": record.beam_idx,
+                        "ray_idx": record.ray_idx,
+                        "beamlet_idx": record.beamlet_idx,
+                        **record_metrics(prediction, record, spacing),
+                    }
+                )
+            print(
+                f"[{mode}] {patient_id}: maps={len(patient_records)} "
+                f"seconds={elapsed:.3f}",
+                flush=True,
+            )
+        by_patient_rows: dict[str, list[dict]] = defaultdict(list)
+        for row in rows:
+            by_patient_rows[row["patient_id"]].append(row)
+        summary: dict[str, object] = {"seconds_total": mode_seconds}
+        for name in ("masked_mae", "nrmse", "idd_distance", "scale_ratio"):
+            patient_means = [
+                float(np.mean([row[name] for row in patient_rows]))
+                for patient_rows in by_patient_rows.values()
+            ]
+            summary[name] = float(np.mean(patient_means))
+        if mode != "off":
+            summary["max_voxel_delta_vs_off"] = parity_max
+        results[mode] = {"summary": summary, "per_record": rows}
+        print(f"[{mode}] {json.dumps(summary)}", flush=True)
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "checkpoint": str(args.checkpoint),
+        "modality": args.modality,
+        "overlap": args.overlap,
+        "batch_size": args.batch_size,
+        "ray_gate_threshold": args.ray_gate_threshold,
+        "prediction_scale": args.prediction_scale,
+        "distal_margin_mm": args.distal_margin_mm,
+        "results": results,
+    }
+    args.output.write_text(json.dumps(payload, indent=2) + "\n")
+    print(f"Wrote {args.output}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

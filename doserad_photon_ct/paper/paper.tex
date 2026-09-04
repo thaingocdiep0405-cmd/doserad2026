@@ -1,0 +1,178 @@
+\documentclass[runningheads]{llncs}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{multirow}
+\usepackage[hidelinks]{hyperref}
+\usepackage[utf8]{inputenc}
+
+\begin{document}
+
+\title{End-to-End Photon Dose Prediction on CT with a Physics-Conditioned 3D Residual U-Net}
+\titlerunning{Physics-Conditioned Photon Dose Prediction on CT}
+
+\author{Ngoc Diep Thai}
+\authorrunning{N.~D.~Thai}
+\institute{Hanoi Amsterdam High School for the Gifted, Hanoi, Vietnam\\
+\email{dieptn@thebluecompass.tech, thaingocdiep.0405@gmail.com}\\
+Grand Challenge team: \texttt{thaingocdiep}, algorithm \emph{photon-ct-dose-engine-v1}}
+
+\maketitle
+
+\begin{abstract}
+We describe our submission to the photon-dose-on-CT task (Task~1) of the DoseRAD2026 challenge. A 3D residual U-Net (1.95M parameters, 4 resolution levels, base width 12) predicts per-control-point dose from the planning CT and physics-derived conditioning channels that encode the beam geometry: binary aperture mask, relative depth, lateral and superior-inferior coordinates, signed aperture-edge distance, inverse-square factor, MLC field width, and primary fluence estimate. The network is trained with a composite loss combining high-dose-weighted smooth L1, an official-MAE surrogate, a directional IDD surrogate, spatial gradient matching, and a global scale correction term, using AdamW on $96^3$ patches. Training uses 60 of the 75 challenge patients (36 abdominal, 39 thoracic) with a 15-patient held-out validation split; no external data or pre-trained weights are used. At inference, dose is predicted by sliding-window over the full CT volume at $128^3$ patches with 25\% overlap and Gaussian blending, batched across control points sharing the same image. On the preliminary test set the method reached a beamlet dose MAE of 0.0940, an IDD curve distance of 0.1360, a gamma pass rate of 18.5\%, and a standardized runtime of 374.3\,s, placing 112th of 119 ranked leaderboard entries.
+\keywords{Photon therapy \and Dose calculation \and Deep learning \and CT \and 3D U-Net}
+\end{abstract}
+
+\section{Introduction}
+Online adaptive radiotherapy requires fast and accurate dose calculation at the moment of treatment. For photon therapy with volumetric modulated arc therapy (VMAT), the treatment plan specifies hundreds of control points, each with a distinct multi-leaf collimator (MLC) aperture and gantry angle. Monte Carlo (MC) transport provides reference-quality dose but is too slow for real-time replanning; analytic engines are faster but approximate scattering and heterogeneity corrections. Deep-learning-based dose prediction has emerged as a promising alternative that can learn the mapping from patient anatomy and beam geometry to dose directly from MC ground truth.
+
+The DoseRAD2026 challenge \cite{doserad_data} provides paired planning CT volumes and per-control-point MC dose maps for 75 patients, enabling supervised training of such models. Task~1 asks participants to predict photon beamlet dose given the planning CT and beam metadata. The key challenge is encoding the beam geometry --- gantry angle, MLC leaf positions, source-axis distance --- in a form the network can exploit, while keeping the model small enough to meet the challenge's runtime constraints (entries above 181\,s at the standardized case of 1 image and 181 control points are excluded from the official ranking).
+
+Our approach conditions a compact 3D residual U-Net on physics-derived spatial channels that explicitly represent the aperture, beam direction, and fluence geometry. By providing these channels as additional input alongside the CT, the network can focus its limited capacity on learning the dose-transport physics rather than re-discovering beam geometry from raw coordinates.
+
+\section{Methods}
+
+\subsection{Data}
+We used exclusively the DoseRAD2026 dataset \cite{doserad_data}: 75 training patients (36 abdominal, 39 thoracic), each with a planning CT on a $2\times2\times2$\,mm$^3$ isotropic grid, per-control-point plan metadata (gantry angle, MLC leaf positions, isocenter, source-axis distance), and Geant4 \cite{geant4} Monte Carlo dose as ground truth (40{,}500 training control points, 3 beams $\times$ $\sim$180 control points per patient). No additional public or private data and no pre-trained models were used.
+
+For model selection we held out a fixed patient-level split of 15 validation patients (60 used for training), the same split across all experiments, with seed 2026. Full-volume validation used 3 control points per validation patient (45 total) sampled across beams and the gantry arc. Validation-patient voxels never contributed gradients.
+
+\subsection{Model}
+
+\subsubsection{Architecture.}
+A residual 3D U-Net \cite{unet,unet3d} maps an 11-channel input patch to a single-channel dose patch. The encoder--decoder has 4 resolution levels with base width 12 (channel widths 12, 24, 48, 96), two pre-activation residual blocks per level, GroupNorm normalization and SiLU activations, strided $3^3$ convolutions for downsampling and $2^3$ transposed convolutions for upsampling, totalling 1.95M parameters. The output head is a $1^3$ convolution followed by a softplus activation, ensuring non-negative dose predictions. The output bias is initialized to $-5.0$ so that untrained predictions start near zero.
+
+\subsubsection{Input channels.}
+Each input patch consists of 11 channels derived from the CT volume and beam geometry:
+\begin{enumerate}
+\item \textbf{Normalized CT} (1 ch): clipped to $[-1024, 2000]$\,HU, linearly scaled to $[-1, 1]$.
+\item \textbf{Body mask} (1 ch): binary indicator of voxels above $-1000$\,HU.
+\item \textbf{Binary aperture} (1 ch): whether each voxel lies within the projected MLC opening, computed by projecting voxel coordinates through the beam geometry (gantry angle, SAD, MLC leaf positions).
+\item \textbf{Beam-relative coordinates} (3 ch): depth (along beam direction), lateral, and superior-inferior displacement from isocenter, each clipped to $[-1, 1]$ at 400\,mm scale.
+\item \textbf{Mass density} (1 ch): HU-to-density conversion using the challenge-provided piecewise-linear calibration table.
+\item \textbf{Signed aperture-edge distance} (1 ch): minimum distance to the nearest MLC leaf edge or field boundary, positive inside the field, negative outside, clipped to $[-1, 1]$ at 40\,mm scale.
+\item \textbf{Inverse-square factor} (1 ch): $(SAD / d_{\mathrm{source}})^2$ where $d_{\mathrm{source}}$ is the source-to-voxel distance, clipped to $[0, 4]$.
+\item \textbf{MLC opening width} (1 ch): local field width at each voxel's projected position, normalized by 200\,mm.
+\item \textbf{Primary fluence} (1 ch): product of a soft aperture (sigmoid of signed edge distance), inverse-square factor, and body mask --- an analytic first-order fluence estimate.
+\end{enumerate}
+
+All beam-geometry channels are computed analytically from the plan metadata with no learned components. The MLC projection accounts for leaf-by-leaf positions and the $0.5$\,mm offset convention matching the challenge's coordinate system.
+
+\subsection{Training}
+
+The network predicts dose scaled by a factor of $10^{-4}$ (dose values in the dataset span several orders of magnitude; this scaling keeps the loss numerically well-conditioned). Training samples random $96^3$ patches biased toward body-containing regions (80\% probability that the patch center lies inside the body mask).
+
+\subsubsection{Loss function.}
+The composite loss has five terms:
+\begin{equation}
+\mathcal{L} = \mathcal{L}_{\mathrm{base}} + \lambda_{\mathrm{mae}}\mathcal{L}_{\mathrm{mae}} + \lambda_{\mathrm{idd}}\mathcal{L}_{\mathrm{idd}} + \lambda_{\mathrm{grad}}\mathcal{L}_{\mathrm{grad}} + \lambda_{\mathrm{scale}}\mathcal{L}_{\mathrm{scale}}
+\end{equation}
+\begin{itemize}
+\item $\mathcal{L}_{\mathrm{base}}$: high-dose-weighted smooth L1 loss. Voxels above 10\% of the patch maximum receive weight $w_h = 2$; all others weight~1.
+\item $\mathcal{L}_{\mathrm{mae}}$ ($\lambda = 2.0$): a differentiable approximation of the official masked beamlet MAE (voxels $\geq$10\% of maximum, normalized by maximum).
+\item $\mathcal{L}_{\mathrm{idd}}$ ($\lambda = 0.15$): a directional IDD surrogate that projects the dose onto the beam axis by rotating the transverse plane to align with the gantry angle, then computes the normalized L1 distance between predicted and target depth-dose curves.
+\item $\mathcal{L}_{\mathrm{grad}}$ ($\lambda = 0.1$): L1 loss on spatial gradients along all three axes, encouraging correct dose falloff shapes.
+\item $\mathcal{L}_{\mathrm{scale}}$ ($\lambda = 0.05$): penalizes deviation of the prediction's global scale (ratio of predicted to target sum) from unity.
+\end{itemize}
+
+\subsubsection{Optimization.}
+AdamW with learning rate $3\times10^{-5}$, weight decay $2\times10^{-4}$, gradient clipping at norm 1.0, batch size 4, 1000 steps per epoch, mixed-precision (fp16) on a single GPU. The submitted checkpoint (v3) was warm-started from a blended v2 checkpoint that combined a full-volume-MAE-selected and an IDD-selected model at equal weights (50/50 blend). Training ran for 30 epochs; the best checkpoint was selected at epoch 14 based on full-volume beamlet MAE evaluated every 2 epochs on 15 validation patients $\times$ 3 control points.
+
+\subsection{Inference pipeline}
+
+At test time the container receives up to 10 CT volumes and a stacked metadata file listing control points per volume. For each volume, control points are processed in chunks of 32 to limit GPU memory (the A10G evaluation instance has 22.3\,GiB VRAM).
+
+Per control point, the conditioning channels are built from the CT and beam metadata, and dose is predicted by sliding-window inference: $128^3$ patches with 25\% overlap, Gaussian blending, fp16, batch size 4. The \texttt{minimum\_cutoff} from the plan metadata is applied to zero low-dose voxels. Dose maps are written into stacked MHA output files as they complete.
+
+The container uses PyTorch 2.9 with \texttt{torch.compile} in \texttt{reduce-overhead} mode when gcc is available; a warm-up pass at startup pre-compiles CUDA kernels. If compilation fails (e.g., incompatible GPU), the container falls back to eager execution automatically.
+
+\subsection{Evaluation}
+We report the challenge's official metrics \cite{doserad_metrics}: masked per-beamlet MAE (voxels $\geq$10\% of the beamlet's maximum ground-truth dose, normalized by that maximum), integrated depth-dose (IDD) curve RMS distance normalized by the ground-truth peak, stratified plan-level MAE (high/mid/low dose strata), 3D local gamma pass rate at 1\%/1\,mm, a plan-level DVH error, and runtime. Runtime is not wall-clock: the organizers fit a linear model $T = t_{\mathrm{fix}} + N_{\mathrm{image}} \cdot t_{\mathrm{image}} + N_{\mathrm{map}} \cdot t_{\mathrm{map}}$ across evaluation jobs and report $T$ at a standardized case of 1 image and 181 control points, with entries above 181\,s excluded from the official ranking. The per-map term dominates; sliding-window inference cost per control point is what the metric measures. Locally we used the same masked MAE and IDD definitions on validation beamlets; leaderboard means and standard deviations are per-patient statistics computed by the organizers. We did not compute confidence intervals beyond these dispersion estimates, and no explainability methods were used.
+
+\section{Results}
+
+\subsection{Preliminary test phase}
+
+Table~\ref{tab:lb} shows our submission's performance on the preliminary test set. The model achieves a beamlet MAE of 0.0940 and IDD distance of 0.1360, ranking 112th of 119 ranked entries overall with a mean metric position of 104.7. The runtime of 374.3\,s exceeds the 181\,s exclusion threshold, which heavily penalizes the ranking (runtime is rank-scored with double weight in the mean position calculation).
+
+\begin{table}[t]
+\centering
+\caption{Official preliminary-test leaderboard metrics (photon dose on CT). Parenthesized values are per-metric ranks among 119 ranked entries. Our submission uses a 1.95M-parameter end-to-end U-Net (v3, epoch 14). The top entry (ix\_doserad) is shown for reference.}
+\label{tab:lb}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcc}
+\toprule
+Metric & Ours (v3 U-Net) & Top entry (ix\_doserad)\\
+\midrule
+Beamlet MAE $\downarrow$ & 0.0940 (101) & \textbf{0.0086} (1)\\
+IDD distance $\downarrow$ & 0.1360 (98) & \textbf{0.0074} (1)\\
+Stratified plan MAE $\downarrow$ & 0.0987 (102) & \textbf{0.0045} (1)\\
+Gamma 1\%/1\,mm [\%] $\uparrow$ & 18.5 (107) & \textbf{95.6} (3)\\
+DVH error $\downarrow$ & 7.3875 (95) & \textbf{0.2308} (3)\\
+Standardized runtime [s] $\downarrow$ & 374.3 (115) & 43.0 (13)\\
+\midrule
+Mean position & 104.7 (112th / 119) & \textbf{7.6} (1st / 119)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Analysis of performance gaps}
+
+The large accuracy gap to the top entries (MAE 0.094 vs.\ 0.009, roughly 10$\times$) and the low gamma pass rate (18.5\% vs.\ $>$90\%) point to fundamental limitations of the current approach:
+
+\begin{enumerate}
+\item \textbf{Model capacity.} At 1.95M parameters with base width 12 and 4 levels, the network has limited capacity to capture the complex scattering and heterogeneity effects of photon transport. The top entries likely use significantly larger models or ensembles.
+
+\item \textbf{Missing radiological depth information.} The submitted v3 model uses 11 physics-prior channels but does not include radiological (water-equivalent) depth along the beam direction. Without this information, the network must infer the cumulative attenuation from local CT patches --- a fundamentally ill-posed task when the patch does not extend to the beam entry point. Our later v6 model added ray-traced radiological depth and attenuated-fluence channels (13 inputs, 31.4M parameters), improving local validation metrics, but was too slow to submit within the runtime budget.
+
+\item \textbf{Runtime budget.} The 181\,s exclusion threshold for photon CT (181 control points at the standardized case) is stringent. Our v3 model's sliding-window inference at $128^3$ patches with 25\% overlap produces a runtime of 377.9\,s, well above the threshold. The double weight on runtime rank makes this the single largest contributor to the poor mean position.
+\end{enumerate}
+
+\section{Discussion}
+
+Our Task~1 submission demonstrates a physics-conditioned end-to-end approach to photon dose prediction. The 11 conditioning channels provide the network with explicit beam-geometry information (aperture, coordinates, fluence estimate), removing the need to learn these from raw spatial positions. However, the current model is limited by its compact size and the absence of along-ray attenuation information.
+
+Two concrete improvements are identified but were not deployable in time. First, adding radiological depth channels (v6 architecture): our experiments showed that ray-traced water-equivalent depth and attenuated-fluence channels substantially improved local validation accuracy (MAE 0.0749 with 13 channels and 31.4M parameters vs.\ 0.0813 with 11 channels and 1.95M parameters), but the larger model exceeded the runtime budget at all tested patch/overlap configurations ($>$900\,s at the standardized case). Second, inference acceleration: reducing patch overlap to zero, using smaller inference patches, or batching multiple control points per forward pass could bring the runtime below 181\,s, but at the cost of accuracy from reduced spatial context.
+
+The lesson from this task is that the photon dose-prediction problem on CT, unlike the proton-on-MRI task where density inference is the bottleneck, is primarily a capacity-and-speed optimization problem: the CT already provides the density information the network needs, but learning the full photon transport (primary beam, scatter, heterogeneity corrections) from $96^3$--$128^3$ patches requires more model capacity than fits within the runtime envelope. The top entries (MAE $<$ 0.015, runtime $<$ 100\,s) appear to have solved this speed--accuracy tradeoff, likely through architectural innovations or efficient inference strategies that we did not explore.
+
+Limitations. (i)~The 1.95M-parameter model is far below the capacity needed for competitive photon dose prediction; the v5/v6 models (13.9M--31.4M parameters) showed clear accuracy gains but could not meet the runtime constraint. (ii)~The sliding-window inference with 25\% overlap is computationally expensive; zero-overlap or larger-stride strategies were not tested for the submitted model. (iii)~No data augmentation was used in the v3 training; later versions added HU jitter, density scaling, and noise injection. (iv)~The composite loss weights were tuned manually; systematic hyperparameter search was not performed. (v)~Results are reported on the preliminary test set of a single challenge; the final-phase test set is evaluated blind.
+
+\section{Author Contributions}
+Following the CRediT taxonomy, Ngoc Diep Thai: Conceptualization, Methodology, Software, Validation, Formal analysis, Investigation, Data curation, Writing --- original draft, Writing --- review \& editing, Visualization.
+
+\section{Compliance with Ethical Standards}
+This study was performed in line with the principles of the Declaration of Helsinki. No human subjects were recruited; all data were provided by the DoseRAD2026 challenge organizers under their data use agreement.
+
+\subsection*{Funding}
+This work received no external funding.
+
+\subsection*{Conflict of Interest}
+The author declares no conflict of interest.
+
+\subsection*{Data and Code Availability}
+The DoseRAD2026 dataset is available through the Grand Challenge platform \cite{doserad_data}. Code for the submitted algorithm will be released upon conclusion of the challenge as required by the challenge rules.
+
+\section*{Acknowledgments}
+We thank the DoseRAD2026 organizers for the dataset, the example submission containers, and the responsive support forum.
+
+\begin{thebibliography}{8}
+\bibitem{doserad_data}
+DoseRAD2026 organizers: The DoseRAD2026 dataset: paired CT--MRI volumes with beam-level Monte Carlo dose for photon and proton therapy. arXiv preprint \doi{10.48550/arXiv.2604.12778} (2026)
+
+\bibitem{doserad_metrics}
+DoseRAD2026 challenge: Metrics and ranking. \url{https://doserad2026.grand-challenge.org/metrics-and-ranking/}, accessed 2026-08-28
+
+\bibitem{geant4}
+Agostinelli, S., et al.: Geant4 --- a simulation toolkit. Nuclear Instruments and Methods in Physics Research A \textbf{506}(3), 250--303 (2003)
+
+\bibitem{unet}
+Ronneberger, O., Fischer, P., Brox, T.: U-Net: Convolutional networks for biomedical image segmentation. In: MICCAI 2015, LNCS 9351, pp. 234--241. Springer (2015)
+
+\bibitem{unet3d}
+\c{C}i\c{c}ek, \"O., Abdulkadir, A., Lienkamp, S.S., Brox, T., Ronneberger, O.: 3D U-Net: Learning dense volumetric segmentation from sparse annotation. In: MICCAI 2016, LNCS 9901, pp. 424--432. Springer (2016)
+\end{thebibliography}
+
+\end{document}

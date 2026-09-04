@@ -1,0 +1,52 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {title}{Hybrid Analytic Pencil-Beam Dose Calculation on MRI with a 3D Residual U-Net Synthetic CT for Proton Therapy}{1}{chapter.1}\protected@file@percent }
+\@writefile{toc}{\authcount {1}}
+\@writefile{toc}{\contentsline {author}{Ngoc Diep Thai}{1}{chapter.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1.1}\protected@file@percent }
+\citation{pyradplan,matrad}
+\citation{doserad_data}
+\citation{geant4}
+\citation{unet,unet3d}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Methods}{2}{section.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Data}{2}{subsection.1.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Model}{2}{subsection.1.2.2}\protected@file@percent }
+\citation{pyradplan}
+\citation{matrad}
+\@writefile{toc}{\contentsline {subsubsection}{Synthetic-CT network.}{3}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Pencil-beam engine.}{3}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Training}{3}{subsection.1.2.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Region-of-interest strategy, measured on 23 thoracic validation beamlets with real CT as density. ``Dose kept'' is the fraction of Monte-Carlo dose inside the computed region.}}{4}{table.1.1}\protected@file@percent }
+\newlabel{tab:slab}{{1}{4}{Region-of-interest strategy, measured on 23 thoracic validation beamlets with real CT as density. ``Dose kept'' is the fraction of Monte-Carlo dose inside the computed region}{table.1.1}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Model selection.}{4}{section*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Inference pipeline}{4}{subsection.1.2.4}\protected@file@percent }
+\newlabel{sec:slab}{{2.4}{4}{Inference pipeline}{subsection.1.2.4}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Transverse slab restriction.}{4}{section*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{Parallelization.}{4}{section*.6}\protected@file@percent }
+\citation{doserad_metrics}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Worker-pool scaling, 24 beamlets of one thoracic patient on a 20-core development machine.}}{5}{table.1.2}\protected@file@percent }
+\newlabel{tab:parallel}{{2}{5}{Worker-pool scaling, 24 beamlets of one thoracic patient on a 20-core development machine}{table.1.2}{}}
+\@writefile{toc}{\contentsline {subsubsection}{Post-processing.}{5}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}Evaluation}{5}{subsection.1.2.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Density source ablation on 45 validation beamlets (15 patients $\times $ 3), identical engine and settings. Real CT is an oracle unavailable at test time.}}{6}{table.1.3}\protected@file@percent }
+\newlabel{tab:density}{{3}{6}{Density source ablation on 45 validation beamlets (15 patients $\times $ 3), identical engine and settings. Real CT is an oracle unavailable at test time}{table.1.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Results}{6}{section.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Density source ablation}{6}{subsection.1.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Preliminary test phase}{6}{subsection.1.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Where the residual error lives}{6}{subsection.1.3.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Official preliminary-test leaderboard metrics (proton dose on MRI), our submissions. Parenthesized values are per-metric ranks among 29 entries. ``Dose network'' is our earlier end-to-end U-Net submission, whose 571\,s runtime exceeded the 500\,s threshold and was therefore excluded from the official ranking; ``Hybrid PB+sCT'' is the submitted algorithm described in this paper.}}{7}{table.1.4}\protected@file@percent }
+\newlabel{tab:lb}{{4}{7}{Official preliminary-test leaderboard metrics (proton dose on MRI), our submissions. Parenthesized values are per-metric ranks among 29 entries. ``Dose network'' is our earlier end-to-end U-Net submission, whose 571\,s runtime exceeded the 500\,s threshold and was therefore excluded from the official ranking; ``Hybrid PB+sCT'' is the submitted algorithm described in this paper}{table.1.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Discussion}{7}{section.1.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Author Contributions}{7}{section.1.5}\protected@file@percent }
+\citation{doserad_data}
+\bibcite{doserad_data}{1}
+\bibcite{doserad_metrics}{2}
+\bibcite{pyradplan}{3}
+\bibcite{matrad}{4}
+\bibcite{geant4}{5}
+\bibcite{unet}{6}
+\bibcite{unet3d}{7}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Compliance with Ethical Standards}{8}{section.1.6}\protected@file@percent }
+\gdef \@abspage@last{8}

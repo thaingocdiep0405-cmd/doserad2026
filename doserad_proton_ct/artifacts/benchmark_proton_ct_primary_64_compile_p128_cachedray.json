@@ -1,0 +1,31 @@
+{
+  "patient_id": "1ABB039",
+  "modality": "ct",
+  "image_shape_zyx": [
+    120,
+    447,
+    449
+  ],
+  "beamlets": 64,
+  "patch_size_zyx": [
+    128,
+    128,
+    128
+  ],
+  "overlap": 0.25,
+  "condition_batch_size": 8,
+  "torch_compile": true,
+  "pad_batch": true,
+  "warmup": true,
+  "durations": [
+    70.36672921804711
+  ],
+  "seconds": 70.36672921804711,
+  "seconds_per_beamlet": 1.0994801440319861,
+  "estimated_seconds_for_target_beamlets": 549.7400720159931,
+  "target_beamlets": 500,
+  "peak_cuda_allocated_gib": 12.418806076049805,
+  "peak_cuda_reserved_gib": 21.01171875,
+  "output_count": 64,
+  "finite_outputs": true
+}

@@ -1,0 +1,6 @@
+# Install in a dedicated environment. For NVIDIA aarch64, use the PyTorch wheel
+# supplied for the machine/CUDA stack if the generic resolver has no GPU wheel.
+numpy>=2.0
+scipy>=1.13
+SimpleITK>=2.4
+torch>=2.5

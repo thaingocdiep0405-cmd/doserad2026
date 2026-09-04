@@ -1,0 +1,32 @@
+{
+  "patient_id": "1ABB039",
+  "modality": "mri",
+  "image_shape_zyx": [
+    120,
+    447,
+    449
+  ],
+  "beamlets": 64,
+  "condition_selection": "evenly_spaced",
+  "patch_size_zyx": [
+    128,
+    128,
+    128
+  ],
+  "overlap": 0.25,
+  "condition_batch_size": 8,
+  "torch_compile": true,
+  "pad_batch": true,
+  "warmup": true,
+  "durations": [
+    54.71954240906052
+  ],
+  "seconds": 54.71954240906052,
+  "seconds_per_beamlet": 0.8549928501415707,
+  "estimated_seconds_for_target_beamlets": 427.49642507078534,
+  "target_beamlets": 500,
+  "peak_cuda_allocated_gib": 13.484724521636963,
+  "peak_cuda_reserved_gib": 22.98828125,
+  "output_count": 64,
+  "finite_outputs": true
+}

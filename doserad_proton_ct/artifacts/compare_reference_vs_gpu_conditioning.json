@@ -1,0 +1,12 @@
+{
+  "patient_id": "1ABB039",
+  "shape": [
+    120,
+    447,
+    449
+  ],
+  "max_abs_difference": 1.8615392036736012e-06,
+  "mean_abs_difference": 1.4954024130098276e-10,
+  "reference_mean_abs": 5.639188884742907e-07,
+  "allclose_1e-5": false
+}

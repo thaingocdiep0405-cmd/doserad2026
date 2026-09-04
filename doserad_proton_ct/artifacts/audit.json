@@ -1,0 +1,11 @@
+{
+  "patient_count": 75,
+  "record_count": 81000,
+  "ct_count": 75,
+  "mr_count": 75,
+  "train_patients": 60,
+  "validation_patients": 15,
+  "sample_max_min": 0.00048366616829298437,
+  "sample_max_median": 0.0011306947562843561,
+  "sample_max_max": 0.001638545305468142
+}

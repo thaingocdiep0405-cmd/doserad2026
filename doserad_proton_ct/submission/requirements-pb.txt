@@ -1,0 +1,12 @@
+# Extra dependencies for the pencil-beam backend only, installed on top of
+# requirements.txt when DOSE_ENGINE=pencilbeam.
+#
+# pyRadPlan caps numpy at 2.3, while the network backend pins 2.3.4. Installing
+# these separately lets pip step numpy back for this image alone and leaves the
+# network image, which is already validated and submitted, untouched.
+#
+# pyRadPlan carries its own machine data (data/machines/protons_Generic.mat).
+# threadpoolctl holds each dose worker to one thread, which is what makes the
+# worker pool scale: without it eight workers were slower than four.
+pyRadPlan==0.3.5
+threadpoolctl==3.6.0

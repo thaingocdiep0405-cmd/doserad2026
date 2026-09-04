@@ -1,0 +1,171 @@
+\documentclass[runningheads]{llncs}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{multirow}
+\usepackage[hidelinks]{hyperref}
+\usepackage[utf8]{inputenc}
+
+\begin{document}
+
+\title{Analytic Proton Pencil-Beam Dose Calculation on Planning CT using pyRadPlan}
+\titlerunning{Pencil-Beam Proton Dose on CT}
+
+\author{Ngoc Diep Thai}
+\authorrunning{N.~D.~Thai}
+\institute{Hanoi Amsterdam High School for the Gifted, Hanoi, Vietnam\\
+\email{dieptn@thebluecompass.tech, thaingocdiep.0405@gmail.com}\\
+Grand Challenge team: \texttt{thaingocdiep}, algorithm \emph{proton-ct-dose-v1}}
+
+\maketitle
+
+\begin{abstract}
+We describe our submission to the proton-dose-on-CT task (Task~3) of the DoseRAD2026 challenge. Rather than training a neural network to predict dose end-to-end, we use the open-source pyRadPlan analytic proton pencil-beam engine to compute each beamlet's dose directly on the planning CT. The CT provides mass density via the challenge-provided Hounsfield-to-density lookup table, so no learned component is needed. The engine uses the \texttt{Generic} proton machine model with air-offset correction and a 25\,mm geometric lateral cutoff. To reduce runtime, beamlets are computed on transverse slabs of $\pm$12 slices around the isocenter rather than the full volume, and beamlets sharing an isocenter slice are batched into a single dose-influence computation on a 2\,mm in-plane grid, amortizing per-call overhead. Beamlets are parallelized over single-threaded CPU worker processes forked after the density volume is loaded (copy-on-write). On our 45-beamlet validation split (15 held-out patients $\times$ 3 beamlets), the pencil-beam engine achieves a masked beamlet MAE of 0.028 and an IDD curve distance of 0.010, compared to 0.052 and 0.130 from our earlier end-to-end 3D U-Net, while running approximately five times faster. This submission replaces our earlier deep-learning approach (ranked 60th of 64 on the preliminary test set) with a purely physics-based method whose accuracy and speed are both substantially improved.
+\keywords{Proton therapy \and Dose calculation \and Pencil beam \and CT \and pyRadPlan}
+\end{abstract}
+
+\section{Introduction}
+Proton therapy exploits the Bragg peak --- the sharp dose maximum near the end of the proton's range --- to spare normal tissue beyond the target. Accurate dose calculation is essential because the peak position depends sensitively on the tissue densities along the beam path: a few percent error in water-equivalent path length shifts the peak by several millimetres. Monte Carlo (MC) transport is the gold standard but too slow for online adaptive workflows; analytic pencil-beam algorithms are fast but approximate nuclear interactions and lateral scattering. Deep learning offers a third path: learning the MC dose distribution directly from the patient anatomy and beam parameters.
+
+The DoseRAD2026 challenge \cite{doserad_data} provides paired planning CT volumes and per-beamlet MC dose maps for 75 patients, enabling supervised training. Task~3 asks participants to predict proton beamlet dose given the planning CT and beam metadata (energy, spot size, gantry angle, ray source and target positions).
+
+Our earlier submissions used an end-to-end 3D residual U-Net conditioned on physics-derived spatial channels, but this approach proved uncompetitive (ranked 60th of 64) due to the absence of integrated path-length information in the local-patch input, limited model capacity (1.95M parameters), and runtime exceeding the 500\,s exclusion threshold. On the MRI proton task (Task~4), where density is unavailable from the input image, we found that a hybrid approach --- synthetic CT from a U-Net plus an analytic pencil-beam engine --- outperformed the end-to-end network on every metric. For Task~3, where the planning CT directly provides mass density, the same insight applies even more cleanly: the pencil-beam engine runs on the real CT with no learned component at all, yielding both better accuracy and faster runtime than our deep-learning approach.
+
+\section{Methods}
+
+\subsection{Data}
+We used exclusively the DoseRAD2026 dataset \cite{doserad_data}: 75 training patients (36 abdominal, 39 thoracic), each with a planning CT on a $1\times1\times3$\,mm$^3$ grid, per-beamlet plan metadata (gantry angle, ray source/target positions, energy, spot sigma), and Geant4 \cite{geant4} Monte Carlo dose as ground truth (81{,}000 training beamlets across all energies 31.7--200.8\,MeV). No additional public or private data and no pre-trained models were used.
+
+For validation we held out a fixed patient-level split of 15 patients (60 used for training the earlier network), with seed 2026. Dose-level validation used 3 beamlets per validation patient (45 beamlets) sampled across energies.
+
+\subsection{Pencil-beam engine}
+Beamlet dose is computed by pyRadPlan \cite{pyradplan}, the open-source Python successor of matRad \cite{matrad}, using its analytic proton pencil-beam algorithm with the \texttt{Generic} proton machine model. The Hounsfield-to-density conversion uses the lookup table shipped with the challenge's beam parameters, so the density interpretation matches the one used to generate the Monte Carlo ground truth. Each beamlet is specified by its gantry angle, source and target position, and energy taken from the plan metadata; the requested energy is snapped to the nearest entry of the machine's energy table. The dose grid equals the CT grid, with air-offset correction enabled and a 25\,mm geometric lateral cutoff. The engine is used strictly as a forward dose calculator; no weights or beam model parameters were fitted to the Monte Carlo data.
+
+Unlike the MRI proton task (Task~4), where density must be inferred from the input image, the CT task provides density directly: the planning CT is passed to the engine's Hounsfield-to-density conversion without any learned transformation. This makes the Task~3 submission a purely physics-based method with no neural network component.
+
+\subsection{Transverse slab restriction}
+\label{sec:slab}
+The challenge's proton beamlets travel exactly in the transverse plane, so slices away from the isocenter carry no dose. Each beamlet is therefore computed on a slab of $\pm$12 slices ($\pm$36\,mm) around its isocenter slice, with the transverse plane kept \emph{whole}. This last point matters: an earlier version also cropped the transverse plane to a corridor around the ray, which silently broke thoracic beamlets. Cropping through the body corrupts the engine's own body segmentation and air-offset correction, so the water-equivalent depth assigned to the protons is wrong; widening the corridor does not fix it (a 120\,mm margin still recovered only 15\% of the dose on the worst case, while the full plane recovered it entirely). Table~\ref{tab:slab} quantifies the repair on a 23-beamlet thoracic subset against real CT: mean IDD drops from 0.135 to 0.018 and no beamlet loses dose anymore, at 2.1\,s instead of 1.0\,s per beamlet. Doubling the slab to $\pm$24 slices changes the accuracy by less than $10^{-4}$, so $\pm$12 is where the slab stops paying.
+
+\begin{table}[t]
+\centering
+\caption{Region-of-interest strategy, measured on 23 thoracic validation beamlets with real CT. ``Dose kept'' is the fraction of Monte-Carlo dose inside the computed region.}
+\label{tab:slab}
+\begin{tabular}{lccccc}
+\toprule
+ROI strategy & MAE & IDD & Dose kept & s/beamlet & Failed\\
+\midrule
+Corridor crop (x, y and z) & 0.116 & 0.135 & 0.71 & 0.97 & 12/23\\
+Transverse slab, $z\pm12$ slices & \textbf{0.040} & \textbf{0.018} & \textbf{1.00} & 2.10 & \textbf{0/23}\\
+Transverse slab, $z\pm24$ slices & 0.040 & 0.018 & 1.00 & 3.93 & 0/23\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Batch computation and parallelization}
+
+\subsubsection{Batch dose-influence.}
+The per-beamlet cost of the serial path is dominated by per-call overhead: body segmentation, engine and machine initialization, and grid resampling are all repeated for every beamlet even though beamlets in a plan share a handful of isocenter slices. Beamlets sharing the same isocenter slice (typically $\sim$5 distinct slices per patient) are grouped and computed as a single dose-influence matrix via \texttt{calc\_dose\_influence}; individual beamlet doses are extracted by applying one-hot weight vectors to the influence matrix, which is the exact resampling path the engine's forward solver uses. The in-plane dose-grid resolution is set to 2\,mm (vs.\ the CT's native 1\,mm), which measured both faster and more accurate than the native grid on 20 thoracic validation beamlets: MAE 0.034 vs.\ 0.038, IDD 0.015 vs.\ 0.021. The z-resolution stays at the CT's own 3\,mm slice spacing.
+
+\subsubsection{Parallelization.}
+pyRadPlan's pencil-beam computation is single-threaded CPU work and beamlets are independent, so beamlets are farmed out to a pool of worker processes forked \emph{after} the density volume exists --- workers read it copy-on-write instead of receiving a hundred-megabyte copy --- and return only the nonzero-cropped slab of their dose. Thread pinning is decisive: the numerical libraries inside each dose call spawn their own threads, so adding workers without limiting them to one thread each makes throughput \emph{worse}. With \texttt{threadpoolctl} limiting each worker to a single thread, 8 workers reach 0.33\,s per beamlet on a 20-core development machine, a 6.7$\times$ speedup over serial execution. The batch dose-influence path further reduces this to $\sim$0.21\,s per beamlet.
+
+\subsection{Inference pipeline}
+At test time the container receives up to 10 CT volumes and a stacked metadata file listing beamlets per volume. The planning CT is used directly as input to the pencil-beam engine (no preprocessing beyond the built-in HU-to-density conversion). Beamlet groups are dispatched to worker processes, and completed dose maps are written incrementally into the stacked output file via a streaming writer that seeks to the correct byte offset, holding only one frame in memory. The only post-processing is the plan-specified minimum dose cutoff: voxels at or below each map's \texttt{minimum\_cutoff} are zeroed.
+
+\subsection{Evaluation}
+We report the challenge's official metrics \cite{doserad_metrics}: masked per-beamlet MAE, IDD curve RMS distance, stratified plan-level MAE, 3D local gamma pass rate at 1\%/1\,mm, plan-level DVH error, and runtime. Runtime is not wall-clock: the organizers fit a linear model $T = t_{\mathrm{fix}} + N_{\mathrm{image}} \cdot t_{\mathrm{image}} + N_{\mathrm{map}} \cdot t_{\mathrm{map}}$ across evaluation jobs and report $T$ at a standardized case of 1 image and 500 beamlets, with entries above 500\,s excluded from the official ranking. Because the per-map term dominates, per-beamlet inference cost is what the metric measures. In this submission the per-image cost ($t_{\mathrm{image}}$) is essentially zero --- there is no neural network to warm up and no synthetic CT to generate --- so the standardized runtime depends almost entirely on the per-beamlet engine cost.
+
+\section{Results}
+
+\subsection{Validation: pencil beam vs.\ deep learning}
+Table~\ref{tab:val} compares the pencil-beam engine and our earlier end-to-end 3D U-Net on the 45 validation beamlets. The pencil beam improves every metric: MAE drops 1.9$\times$ (0.052$\rightarrow$0.028) and IDD drops 13.5$\times$ (0.130$\rightarrow$0.010). The improvement is expected: the analytic engine integrates density along the full beam path, naturally placing the Bragg peak at the correct depth, while the U-Net operating on $96^3$ patches had no access to the cumulative path-length information needed to determine peak position.
+
+\begin{table}[t]
+\centering
+\caption{Validation comparison (45 beamlets, 15 held-out patients) between the pencil-beam engine and our earlier end-to-end 3D U-Net, both evaluated on real CT.}
+\label{tab:val}
+\begin{tabular}{lcc}
+\toprule
+Method & Beamlet MAE & IDD distance\\
+\midrule
+End-to-end 3D U-Net (earlier) & 0.052 & 0.130\\
+Pencil beam (this submission) & \textbf{0.028} & \textbf{0.010}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Preliminary test phase (earlier submissions)}
+Table~\ref{tab:lb} shows the leaderboard metrics of our two earlier deep-learning submissions on the preliminary test set, for reference. Both used the end-to-end U-Net and both exceeded the 500\,s runtime exclusion threshold. The pencil-beam submission described in this paper was submitted for the final testing phase; its preliminary-phase leaderboard metrics are not available because the algorithm image was updated after the preliminary phase closed.
+
+\begin{table}[t]
+\centering
+\caption{Official preliminary-test leaderboard metrics (proton dose on CT), our two earlier deep-learning submissions. Parenthesized values are per-metric ranks among 64 entries. The top entry (Zimty) is shown for reference.}
+\label{tab:lb}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lccc}
+\toprule
+Metric & Sub \#1 (v1/v2 blend) & Sub \#2 (v2) & Top (Zimty)\\
+\midrule
+Beamlet MAE $\downarrow$ & 0.0712 ($\sim$59) & 0.0622 ($\sim$58) & \textbf{0.0061} (1)\\
+IDD distance $\downarrow$ & 0.1959 ($\sim$57) & 0.3162 ($\sim$61) & \textbf{0.0020} (1)\\
+Strat.\ plan MAE $\downarrow$ & 0.1197 ($\sim$58) & 0.1251 ($\sim$59) & \textbf{0.0044} (1)\\
+Gamma 1\%/1\,mm [\%] $\uparrow$ & 33.0 ($\sim$55) & 33.5 ($\sim$54) & \textbf{98.8} (1)\\
+DVH error $\downarrow$ & 19.72 ($\sim$62) & 19.38 ($\sim$61) & \textbf{0.4340} (2)\\
+Runtime [s] $\downarrow$ & 550.4 ($\sim$57) & 621.7 ($\sim$60) & 135.8 (13)\\
+\midrule
+Mean position & 58.1 (59th / 64) & 59.1 (60th / 64) & \textbf{6.7} (1st / 64)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Runtime analysis}
+On our development machine (20 CPU cores), the batch pencil-beam engine achieves $\sim$0.21\,s per beamlet with 8 workers. The challenge evaluates on an NVIDIA A10G instance; based on the scaling factor observed on our MRI submissions ($\approx 2.07\times$ our development GPU timing), we estimate a per-beamlet cost of $\sim$0.44\,s on the evaluation hardware. At 500 beamlets the standardized runtime would be approximately $500 \times 0.44 \approx 220$\,s, well within the 500\,s exclusion threshold --- in contrast to the $>$550\,s of both deep-learning submissions.
+
+\section{Discussion}
+Our final Task~3 submission replaces the end-to-end deep-learning approach with a purely physics-based analytic pencil-beam engine. The motivation is the same insight that drove our Task~4 design \cite{doserad_t4}: the binding constraint for proton dose prediction is not model capacity but \emph{density along the beam path}. A convolutional network operating on local patches cannot integrate density over the full proton range, so it cannot determine where the Bragg peak should be placed --- the dominant error source in our earlier submissions. The pencil-beam engine, by construction, integrates the HU-to-density curve along the beam and places the peak at the physical depth.
+
+For Task~3 on CT, this insight leads to a particularly clean design: the planning CT provides density directly, so no learned component is needed at all. The same engine serves Task~4 on MRI, where a synthetic-CT network supplies the missing density information. This shared architecture between Tasks~3 and~4 is described in our Task~4 paper \cite{doserad_t4}.
+
+Limitations. (i) The analytic pencil beam is a first-order transport model; its treatment of multiple Coulomb scattering truncates the lateral dose halo, particularly in low-density lung, and the generic machine model's single-Gaussian spot only approximates the challenge's beam model. These limitations set a floor on the achievable beamlet MAE and gamma pass rate. (ii) The engine has no learned component, so it cannot adapt to systematic biases in the Monte Carlo reference. (iii) The runtime estimate for the evaluation hardware is extrapolated from a development machine with different CPU characteristics; the actual standardized runtime may differ. (iv) Results in Table~\ref{tab:val} are on 45 validation beamlets; the final-phase test set is evaluated blind.
+
+\section{Author Contributions}
+Following the CRediT taxonomy, Ngoc Diep Thai: Conceptualization, Methodology, Software, Validation, Formal analysis, Investigation, Data curation, Writing --- original draft, Writing --- review \& editing, Visualization.
+
+\section{Compliance with Ethical Standards}
+This study was performed in line with the principles of the Declaration of Helsinki. No human subjects were recruited; all data were provided by the DoseRAD2026 challenge organizers under their data use agreement.
+
+\subsection*{Funding}
+This work received no external funding.
+
+\subsection*{Conflict of Interest}
+The author declares no conflict of interest.
+
+\subsection*{Data and Code Availability}
+The DoseRAD2026 dataset is available through the Grand Challenge platform \cite{doserad_data}. Code for the submitted algorithm will be released upon conclusion of the challenge as required by the challenge rules.
+
+\section*{Acknowledgments}
+We thank the DoseRAD2026 organizers for the dataset, the example submission containers, and the responsive support forum, and the pyRadPlan and matRad developers for their open-source dose engines.
+
+\begin{thebibliography}{8}
+\bibitem{doserad_data}
+DoseRAD2026 organizers: The DoseRAD2026 dataset: paired CT--MRI volumes with beam-level Monte Carlo dose for photon and proton therapy. arXiv preprint \doi{10.48550/arXiv.2604.12778} (2026)
+
+\bibitem{doserad_metrics}
+DoseRAD2026 challenge: Metrics and ranking. \url{https://doserad2026.grand-challenge.org/metrics-and-ranking/}, accessed 2026-08-29
+
+\bibitem{pyradplan}
+pyRadPlan developers: pyRadPlan: an open-source, Python-native treatment planning toolkit. \url{https://github.com/pyRadPlan/pyRadPlan}, accessed 2026-08-29
+
+\bibitem{matrad}
+Wieser, H.P., Cisternas, E., Wahl, N., et al.: Development of the open-source dose calculation and optimization toolkit matRad. Medical Physics \textbf{44}(6), 2556--2568 (2017)
+
+\bibitem{geant4}
+Agostinelli, S., et al.: Geant4 --- a simulation toolkit. Nuclear Instruments and Methods in Physics Research A \textbf{506}(3), 250--303 (2003)
+
+\bibitem{doserad_t4}
+Thai, N.D.: Hybrid analytic pencil-beam dose calculation on MRI with a 3D residual U-Net synthetic CT for proton therapy. DoseRAD2026 challenge submission, Task~4 (2026)
+\end{thebibliography}
+
+\end{document}

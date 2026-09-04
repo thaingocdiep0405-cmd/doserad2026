@@ -1,0 +1,4 @@
+FROM doserad2026-proton-mri:pb
+COPY doserad_proton_ct/submission/inference.py /opt/app/inference.py
+COPY doserad_proton_ct/submission/inference_pb.py /opt/app/inference_pb.py
+COPY doserad_proton_ct/src/doserad_proton/pencilbeam.py /opt/app/doserad_proton/pencilbeam.py

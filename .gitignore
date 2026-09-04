@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.egg
+
+# Model weights & checkpoints
+*.pt
+*.pth
+*.onnx
+*.h5
+*.pkl
+*.safetensors
+
+# Archives & submissions
+*.tar.gz
+*.zip
+*.gz
+
+# Training runs (logs, checkpoints, tensorboard)
+runs/
+wandb/
+
+# Data (too large for GitHub)
+data/
+artifacts/manifest.csv
+
+# Distribution / built packages
+dist/
+
+# Large logs
+v5_queue_logs/
+*.log
+
+# IDE / tools
+.vscode/
+.idea/
+.pytest_cache/
+.paddlex/
+
+# Claude / Codex agent configs (local only)
+.claude/
+.agents/
+.codex/
+
+# Embedded git repos (official challenge repos)
+**/official/evaluation-setup/
+**/official/example-submission/
+**/official/pyradplan-pb-baseline/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Numpy data files
+*.npy
+*.npz
