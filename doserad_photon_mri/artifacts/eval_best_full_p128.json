@@ -1,5 +1,5 @@
 {
-  "checkpoint": "/home/dev/huynk/ocr/doserad_photon_mri/runs/photon_mri_baseline/best_full.pt",
+  "checkpoint": "doserad_photon_mri/runs/photon_mri_baseline/best_full.pt",
   "split": "validation",
   "device": "cuda",
   "patch_size_zyx": [

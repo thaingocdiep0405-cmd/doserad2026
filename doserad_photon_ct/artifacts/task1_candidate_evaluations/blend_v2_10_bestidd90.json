@@ -1,5 +1,5 @@
 {
-  "checkpoint": "/home/dev/huynk/ocr/doserad_photon_ct/runs/photon_ct_v3_physics/blend_v2_10_bestidd90.pt",
+  "checkpoint": "doserad_photon_ct/runs/photon_ct_v3_physics/blend_v2_10_bestidd90.pt",
   "split": "validation",
   "device": "cuda",
   "patch_size_zyx": [

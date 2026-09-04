@@ -1,5 +1,5 @@
 {
-  "checkpoint": "/home/dev/huynk/ocr/doserad_photon_mri/runs/photon_mri_baseline/blend_full25_idd75.pt",
+  "checkpoint": "doserad_photon_mri/runs/photon_mri_baseline/blend_full25_idd75.pt",
   "split": "validation",
   "device": "cuda",
   "patch_size_zyx": [

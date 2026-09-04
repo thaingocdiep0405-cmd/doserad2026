@@ -1,17 +1,19 @@
 # DoseRAD2026 — Radiation Dose Prediction Challenge
 
-This repository contains our complete solution for the [DoseRAD2026 Grand Challenge](https://doserad2026.grand-challenge.org/), covering all four tasks of 3D radiation dose prediction from medical imaging.
+My solution for the [DoseRAD2026 Grand Challenge](https://doserad2026.grand-challenge.org/), covering all four tasks of 3D radiation dose prediction from medical imaging.
+
+**Final submissions:** Task 3 (Proton CT) and Task 4 (Proton MRI) were submitted to the final evaluation phase. Task 1 (Photon CT) and Task 2 (Photon MRI) are included in this repository as complete training pipelines but were not submitted to the final phase.
 
 ## Challenge Overview
 
 DoseRAD2026 challenges participants to predict per-control-point 3D radiation dose distributions from patient imaging (CT or MRI) and beam metadata. Each task targets a different modality and particle combination:
 
-| Task | Directory | Modality | Particle | Description |
-|------|-----------|----------|----------|-------------|
-| **Task 1** | `doserad_photon_ct/` | CT | Photon | Photon dose prediction from CT volumes |
-| **Task 2** | `doserad_photon_mri/` | MRI | Photon | Photon dose prediction from MRI volumes |
-| **Task 3** | `doserad_proton_ct/` | CT | Proton | Proton dose prediction from CT volumes |
-| **Task 4** | `doserad_proton_mri/` | MRI | Proton | Proton dose prediction from MRI volumes |
+| Task | Directory | Modality | Particle | Status |
+|------|-----------|----------|----------|--------|
+| **Task 1** | `doserad_photon_ct/` | CT | Photon | Preliminary only |
+| **Task 2** | `doserad_photon_mri/` | MRI | Photon | Preliminary only |
+| **Task 3** | `doserad_proton_ct/` | CT | Proton | Final submitted |
+| **Task 4** | `doserad_proton_mri/` | MRI | Proton | Final submitted |
 
 ## Architecture
 
